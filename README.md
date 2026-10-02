@@ -163,7 +163,7 @@ Outside nvim, `e` opens `$VISUAL` / `$EDITOR` (falling back to `vi`) full screen
 
 ## Recordings
 
-The top GIF is a screen recording of kitty. The others are made with [VHS](https://github.com/charmbracelet/vhs) from the tapes in `demo/`. `make demos` re-records them (needs `vhs` and `uv`; the demo notebook has its own uv project in `demo/`).
+The top GIF is a screen recording of kitty: `demo/play.py` drives jupytui through the tour inside whatever terminal you run it in, so images show for real (start a screen recording, run `/usr/bin/python3 demo/play.py`, press enter). The others are made with [VHS](https://github.com/charmbracelet/vhs) from the tapes in `demo/`. `make demos` re-records them (needs `vhs` and `uv`; the demo notebook has its own uv project in `demo/`).
 
 ## Status
 
