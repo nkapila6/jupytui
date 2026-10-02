@@ -220,6 +220,18 @@ Pressing `e` on a cell (or `ctrl+e` inside one) while in nvim opens it in your a
 
 Outside nvim, `e` opens `$VISUAL` / `$EDITOR` (falling back to `vi`) full screen.
 
+## marimo
+
+jupytui opens [marimo](https://marimo.io) notebooks (`.py` files with `app = marimo.App()`) directly:
+
+```sh
+jupytui analysis.py
+jupytui convert notebook.ipynb analysis.py   # Jupyter -> marimo
+jupytui convert analysis.py notebook.ipynb   # and back
+```
+
+Cells, markdown (`mo.md`), `with app.setup:`, `@app.function` / `@app.class_definition` and cell options like `hide_code=True` are kept. Reactive mode is on by default, like in marimo, and the kernel gets `marimo` layered in by uv so `import marimo as mo` works even if your project doesn't list it. Saving writes marimo's format back, with each cell's parameters and returns worked out from what it uses and defines, so the file still runs with `python analysis.py` and `marimo edit`.
+
 ## Git
 
 Notebooks are JSON, which makes for miserable diffs and merges. jupytui can handle both:

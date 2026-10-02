@@ -14,6 +14,7 @@ import (
 	"github.com/nkapila6/jupytui/internal/envs"
 	"github.com/nkapila6/jupytui/internal/kernel"
 	"github.com/nkapila6/jupytui/internal/lsp"
+	"github.com/nkapila6/jupytui/internal/marimo"
 	"github.com/nkapila6/jupytui/internal/notebook"
 )
 
@@ -121,6 +122,7 @@ type Model struct {
 	reactive bool
 
 	noSaveOutputs bool // :set nosaveoutputs
+	marimoFile    bool // a marimo .py: saved back in marimo's format
 	dfv           *frameView
 	comp          *compState
 	compSeq       int // latest completion request
@@ -230,6 +232,16 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach
 	m.cmd.SetVirtualCursor(false)
 	m.applyTheme()
 	return m
+}
+
+// SetMarimo marks the notebook as a marimo file: it's saved back as one,
+// and reactive mode is on, since that's how marimo notebooks behave.
+func (m *Model) SetMarimo() {
+	m.marimoFile = true
+	m.reactive = true
+	// cells import marimo as mo; the kernel needs it even if the project
+	// doesn't list it
+	m.host.opts.With = append(m.host.opts.With, "marimo")
 }
 
 // Close shuts down kernels and cleans temp files. Call after Run returns.
@@ -661,6 +673,15 @@ func (m *Model) restart() tea.Cmd {
 }
 
 func (m *Model) save() {
+	if m.marimoFile {
+		if err := marimo.Save(m.nb, m.path); err != nil {
+			m.msg = "save failed: " + err.Error()
+			return
+		}
+		m.dirty = false
+		m.msg = "saved " + filepath.Base(m.path) + " (marimo)"
+		return
+	}
 	nb := m.nb
 	if m.noSaveOutputs {
 		nb = nb.Stripped()

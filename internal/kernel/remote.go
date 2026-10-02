@@ -94,8 +94,12 @@ func startRemote(opts Options) (*Kernel, error) {
 	defer logf.Close()
 
 	id := newUUID()[:8]
-	script := fmt.Sprintf(`mkdir -p "$HOME/.cache/jupytui"; cd %s 2>/dev/null || cd; exec uv run --with ipykernel python -c "$(echo %s | base64 -d)" -f "$HOME/.cache/jupytui/kernel-%s.json"`,
-		remoteDir(r.Dir), base64.StdEncoding.EncodeToString([]byte(remoteBootstrap)), id)
+	extra := ""
+	for _, p := range opts.With {
+		extra += " --with " + shq(p)
+	}
+	script := fmt.Sprintf(`mkdir -p "$HOME/.cache/jupytui"; cd %s 2>/dev/null || cd; exec uv run --with ipykernel%s python -c "$(echo %s | base64 -d)" -f "$HOME/.cache/jupytui/kernel-%s.json"`,
+		remoteDir(r.Dir), extra, base64.StdEncoding.EncodeToString([]byte(remoteBootstrap)), id)
 	common := []string{"-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"}
 
 	cmd := exec.Command(sshBin(), append(append([]string{"-T"}, common...), r.Host, "sh -lc "+shq(script))...)

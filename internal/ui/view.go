@@ -136,6 +136,9 @@ func (m *Model) View() tea.View {
 
 func (m *Model) renderHeader() string {
 	name := filepath.Base(m.path)
+	if m.marimoFile {
+		name += " · marimo"
+	}
 	if m.dirty {
 		name += " [+]"
 	}

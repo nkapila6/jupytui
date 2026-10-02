@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/nkapila6/jupytui/internal/kernel"
+	"github.com/nkapila6/jupytui/internal/marimo"
 	"github.com/nkapila6/jupytui/internal/notebook"
 	"github.com/nkapila6/jupytui/internal/session"
 	"github.com/nkapila6/jupytui/internal/ui"
@@ -28,6 +30,7 @@ const usage = `usage: jupytui <notebook.ipynb>        open (or create) a noteboo
        jupytui diff [--outputs] a.ipynb b.ipynb
        jupytui clean [--stdin] nb.ipynb...    strip outputs
        jupytui git setup [--strip-outputs]    notebook diff/merge drivers for this repo
+       jupytui convert [-f] in out            .ipynb <-> marimo .py
        jupytui --version`
 
 // set by the Makefile; go install builds fall back to the module version
@@ -69,6 +72,8 @@ func main() {
 		err = cleanCmd(args[1:])
 	case len(args) >= 1 && args[0] == "git":
 		err = gitCmd(args[1:])
+	case len(args) >= 1 && args[0] == "convert":
+		err = convertCmd(args[1:])
 	case len(args) == 1 && args[0] != "-h" && args[0] != "--help":
 		err = runTUI(args[0])
 	default:
@@ -100,7 +105,13 @@ func runTUI(path string) error {
 		attach = &ui.Attach{Session: s, Running: running}
 	}
 
-	nb, err := notebook.Load(abs)
+	isMarimo := strings.EqualFold(filepath.Ext(abs), ".py")
+	var nb *notebook.Notebook
+	if isMarimo {
+		nb, err = marimo.Load(abs)
+	} else {
+		nb, err = notebook.Load(abs)
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		nb, err = notebook.New(), nil
 	}
@@ -109,6 +120,9 @@ func runTUI(path string) error {
 	}
 
 	m := ui.New(abs, nb, kernel.Options{Dir: filepath.Dir(abs)}, attach)
+	if isMarimo {
+		m.SetMarimo()
+	}
 	p := tea.NewProgram(m)
 
 	// terminal closed or we got killed politely: still clean up the kernel

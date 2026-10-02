@@ -66,6 +66,19 @@ type Options struct {
 	Cmd          []string        // {connection_file} gets substituted
 	StartTimeout time.Duration   // first uv run may have to download ipykernel
 	Remote       *Remote         // run it on another machine over ssh
+	With         []string        // extra packages uv layers into the kernel's env (marimo notebooks need marimo)
+}
+
+// withExtra adds `--with pkg` for each extra package right after `uv run`.
+func withExtra(cmd []string, extra []string) []string {
+	if len(extra) == 0 || len(cmd) < 2 || cmd[0] != "uv" || cmd[1] != "run" {
+		return cmd
+	}
+	out := append([]string{}, cmd[:2]...)
+	for _, p := range extra {
+		out = append(out, "--with", p)
+	}
+	return append(out, cmd[2:]...)
 }
 
 type Kernel struct {
@@ -134,6 +147,7 @@ func Start(opts Options) (*Kernel, error) {
 		return nil, err
 	}
 
+	opts.Cmd = withExtra(opts.Cmd, opts.With)
 	args := make([]string, len(opts.Cmd))
 	for i, a := range opts.Cmd {
 		args[i] = strings.ReplaceAll(a, "{connection_file}", connFile)

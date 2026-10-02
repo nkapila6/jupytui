@@ -1,6 +1,9 @@
 package notebook
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // AddOutput appends an output the way Jupyter does: consecutive chunks
 // of the same stream merge into one, and text overwritten by a carriage
@@ -69,4 +72,46 @@ func (nb *Notebook) Stripped() *Notebook {
 		out.Cells[i] = &cp
 	}
 	return out
+}
+
+// Meta reads a string from the cell's metadata.
+func (c *Cell) Meta(key string) string {
+	var md map[string]json.RawMessage
+	json.Unmarshal(c.raw["metadata"], &md)
+	var s string
+	json.Unmarshal(md[key], &s)
+	return s
+}
+
+// SetMeta stores (or with "" removes) a string in the cell's metadata.
+func (c *Cell) SetMeta(key, val string) {
+	md := map[string]json.RawMessage{}
+	json.Unmarshal(c.raw["metadata"], &md)
+	if val == "" {
+		delete(md, key)
+	} else {
+		md[key], _ = encode(val)
+	}
+	c.raw["metadata"], _ = encode(md)
+}
+
+// Meta reads a string from the notebook's metadata.
+func (nb *Notebook) Meta(key string) string {
+	var md map[string]json.RawMessage
+	json.Unmarshal(nb.raw["metadata"], &md)
+	var s string
+	json.Unmarshal(md[key], &s)
+	return s
+}
+
+// SetMeta stores (or with "" removes) a string in the notebook's metadata.
+func (nb *Notebook) SetMeta(key, val string) {
+	md := map[string]json.RawMessage{}
+	json.Unmarshal(nb.raw["metadata"], &md)
+	if val == "" {
+		delete(md, key)
+	} else {
+		md[key], _ = encode(val)
+	}
+	nb.raw["metadata"], _ = encode(md)
 }

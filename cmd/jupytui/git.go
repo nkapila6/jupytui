@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/nkapila6/jupytui/internal/marimo"
 	"github.com/nkapila6/jupytui/internal/nbdiff"
 	"github.com/nkapila6/jupytui/internal/notebook"
 )
@@ -196,5 +197,44 @@ func gitCmd(args []string) error {
 	}
 	fmt.Println("set up git config and .gitattributes in", root)
 	fmt.Println("commit .gitattributes; everyone else runs `jupytui git setup` once (git config isn't shared)")
+	return nil
+}
+
+// jupytui convert [-f] in out: .ipynb to marimo .py or back, by extension
+func convertCmd(args []string) error {
+	fs := flag.NewFlagSet("convert", flag.ContinueOnError)
+	force := fs.Bool("f", false, "overwrite the output")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("usage: jupytui convert [-f] in.ipynb out.py  (or in.py out.ipynb)")
+	}
+	in, out := fs.Arg(0), fs.Arg(1)
+	if _, err := os.Stat(out); err == nil && !*force {
+		return fmt.Errorf("%s exists, use -f to overwrite", out)
+	}
+	ext := func(p string) string { return strings.ToLower(filepath.Ext(p)) }
+	switch {
+	case ext(in) == ".ipynb" && ext(out) == ".py":
+		nb, err := notebook.Load(in)
+		if err != nil {
+			return err
+		}
+		if err := marimo.Save(nb, out); err != nil {
+			return err
+		}
+	case ext(in) == ".py" && ext(out) == ".ipynb":
+		nb, err := marimo.Load(in)
+		if err != nil {
+			return err
+		}
+		if err := nb.Save(out); err != nil {
+			return err
+		}
+	default:
+		return errors.New("convert goes .ipynb -> marimo .py or marimo .py -> .ipynb")
+	}
+	fmt.Println("wrote", out)
 	return nil
 }
