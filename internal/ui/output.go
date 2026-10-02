@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -67,8 +69,28 @@ func (m *Model) renderMime(o *notebook.Output, width int) string {
 	if s, ok := o.DataText("text/markdown"); ok {
 		return m.markdown(s, width)
 	}
-	if s, ok := o.DataText("text/plain"); ok {
-		return s
+	if h, ok := o.DataText("text/html"); ok && isDataFrameHTML(h) {
+		key := strconv.Itoa(width) + "\x00" + h
+		if s, ok := m.tableCache[key]; ok {
+			return s
+		}
+		if t, ok := parseDataFrame(h); ok {
+			s := m.renderTable(t, width)
+			if len(m.tableCache) > 200 {
+				m.tableCache = map[string]string{}
+			}
+			m.tableCache[key] = s
+			return s
+		}
+	}
+	plain, hasPlain := o.DataText("text/plain")
+	// IPython's HTML() and friends only have a "<... object>" repr as
+	// plain text, the HTML is the actual content
+	if h, ok := o.DataText("text/html"); ok && (!hasPlain || objectRepr.MatchString(plain)) {
+		return htmlText(h)
+	}
+	if hasPlain {
+		return plain
 	}
 	var mimes []string
 	for k := range o.Data {
@@ -77,6 +99,8 @@ func (m *Model) renderMime(o *notebook.Output, width int) string {
 	sort.Strings(mimes)
 	return m.st.dim.Render("[" + strings.Join(mimes, ", ") + "]")
 }
+
+var objectRepr = regexp.MustCompile(`^<[\w.]+ object( at 0x[0-9a-f]+)?>$`)
 
 // termText is stream text as a terminal would show it.
 func termText(s string) string {

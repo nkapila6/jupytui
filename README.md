@@ -121,6 +121,14 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
 
 `ctrl+enter` and `shift+enter` need a terminal that supports the kitty keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). In the notebook, `ctrl+r` runs and moves on everywhere.
 
+## Outputs
+
+- stdout/stderr stream in live; `\r` progress bars (tqdm) redraw in place
+- pandas and polars DataFrames are drawn as real tables (index, dtypes, MultiIndex, the `...` rows); wide ones keep readable columns and drop the rest behind `…`
+- tracebacks keep their colours
+- other HTML shows as text, markdown output is rendered
+- plots and images: see below
+
 ## Neovim (LazyVim)
 
 Same idea as `<leader>gg` for lazygit. Drop this in `lua/config/keymaps.lua`:

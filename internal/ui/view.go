@@ -72,6 +72,7 @@ func (m *Model) applyTheme() {
 
 	m.hlCache = map[string]string{}
 	m.mdCache = map[string]string{}
+	m.tableCache = map[string]string{}
 	m.mdr = nil
 }
 

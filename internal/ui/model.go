@@ -127,8 +127,10 @@ type Model struct {
 	st      styles
 	hlCache map[string]string
 	mdCache map[string]string
-	mdr     *glamour.TermRenderer
-	mdrW    int
+	// rendered dataframe tables by width + html
+	tableCache map[string]string
+	mdr        *glamour.TermRenderer
+	mdrW       int
 }
 
 func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
