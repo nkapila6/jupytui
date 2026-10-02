@@ -86,11 +86,13 @@ type Kernel struct {
 	cancel  context.CancelFunc
 	shell   *sock
 	control *sock
+	stdin   *sock
 	iopub   zmq4.Socket
 
 	mu       sync.Mutex
 	replies  map[string]chan *Message // shell/control replies by parent msg_id
 	watchers map[string]chan *Message // iopub messages by parent msg_id
+	inputs   map[string]chan *Message // input_requests by parent msg_id
 
 	status   chan string
 	dead     chan struct{}
@@ -187,6 +189,7 @@ func newKernel(conn ConnInfo, connFile string) *Kernel {
 		cancel:   cancel,
 		replies:  map[string]chan *Message{},
 		watchers: map[string]chan *Message{},
+		inputs:   map[string]chan *Message{},
 		status:   make(chan string, 32),
 		dead:     make(chan struct{}),
 	}
@@ -224,13 +227,17 @@ func (k *Kernel) connectWith(ctx context.Context, timeout time.Duration, attachi
 		}
 	}
 
-	k.shell = &sock{s: zmq4.NewDealer(k.ctx)}
 	k.control = &sock{s: zmq4.NewDealer(k.ctx)}
+	// stdin has to share the shell socket's identity: the kernel sends
+	// input_request to whoever sent the execute_request
+	id := zmq4.SocketIdentity(k.session)
+	k.shell = &sock{s: zmq4.NewDealer(k.ctx, zmq4.WithID(id))}
+	k.stdin = &sock{s: zmq4.NewDealer(k.ctx, zmq4.WithID(id))}
 	k.iopub = zmq4.NewSub(k.ctx)
 	for _, d := range []struct {
 		s    zmq4.Socket
 		port int
-	}{{k.shell.s, k.conn.ShellPort}, {k.control.s, k.conn.ControlPort}, {k.iopub, k.conn.IOPubPort}} {
+	}{{k.shell.s, k.conn.ShellPort}, {k.control.s, k.conn.ControlPort}, {k.stdin.s, k.conn.StdinPort}, {k.iopub, k.conn.IOPubPort}} {
 		if err := d.s.Dial(k.conn.addr(d.port)); err != nil {
 			return fmt.Errorf("dial kernel: %w", err)
 		}
@@ -240,6 +247,7 @@ func (k *Kernel) connectWith(ctx context.Context, timeout time.Duration, attachi
 	}
 	go k.replyLoop(k.shell.s)
 	go k.replyLoop(k.control.s)
+	go k.stdinLoop()
 	go k.iopubLoop()
 
 	if attaching {
@@ -303,6 +311,52 @@ func (k *Kernel) replyLoop(s zmq4.Socket) {
 			ch <- m
 		}
 	}
+}
+
+// stdinLoop routes input_requests to the execution that asked.
+func (k *Kernel) stdinLoop() {
+	for {
+		raw, err := k.stdin.s.Recv()
+		if err != nil {
+			return
+		}
+		m, err := decode(k.key, raw)
+		if err != nil || m.Header.MsgType != "input_request" {
+			continue
+		}
+		k.mu.Lock()
+		ch := k.inputs[m.ParentHeader.MsgID]
+		k.mu.Unlock()
+		if ch != nil {
+			select {
+			case ch <- m:
+			case <-k.dead:
+				return
+			}
+		}
+	}
+}
+
+// InputRequest is input() / getpass() asking for a line.
+type InputRequest struct {
+	Prompt   string
+	Password bool
+	msg      *Message
+}
+
+// Reply answers an input request.
+func (k *Kernel) Reply(req *InputRequest, value string) error {
+	m, err := k.newMessage("input_reply", map[string]string{"value": value})
+	if err != nil {
+		return err
+	}
+	m.ParentHeader = req.msg.Header
+	m.Identities = req.msg.Identities
+	frames, err := m.encode(k.key)
+	if err != nil {
+		return err
+	}
+	return k.stdin.send(frames)
 }
 
 func (k *Kernel) iopubLoop() {
@@ -396,10 +450,12 @@ const (
 	EvOutput                   // Output set
 	EvClear                    // clear_output
 	EvDone                     // ExecCount, Status (ok/error/aborted) or Err set
+	EvInput                    // Input set: the cell is waiting for a line
 )
 
 type Event struct {
 	Kind      EventKind
+	Input     *InputRequest
 	Output    *notebook.Output
 	ExecCount int
 	Status    string
@@ -466,14 +522,19 @@ func (k *Kernel) execute(code string, history bool) (string, <-chan Event, error
 		"silent":           false,
 		"store_history":    history,
 		"user_expressions": map[string]any{},
-		"allow_stdin":      false,
-		"stop_on_error":    history,
+		// our own helper code must never block on input()
+		"allow_stdin":   history,
+		"stop_on_error": history,
 	})
 	if err != nil {
 		return "", nil, err
 	}
 	id := m.Header.MsgID
 	iopub := k.watch(id)
+	inputs := make(chan *Message, 4)
+	k.mu.Lock()
+	k.inputs[id] = inputs
+	k.mu.Unlock()
 	reply, err := k.send(k.shell, m)
 	if err != nil {
 		k.unwatch(id)
@@ -484,6 +545,11 @@ func (k *Kernel) execute(code string, history bool) (string, <-chan Event, error
 	go func() {
 		defer close(events)
 		defer k.unwatch(id)
+		defer func() {
+			k.mu.Lock()
+			delete(k.inputs, id)
+			k.mu.Unlock()
+		}()
 		var (
 			done     Event
 			gotReply bool
@@ -492,6 +558,13 @@ func (k *Kernel) execute(code string, history bool) (string, <-chan Event, error
 		done.Kind = EvDone
 		for !gotReply || !idle {
 			select {
+			case req := <-inputs:
+				var c struct {
+					Prompt   string `json:"prompt"`
+					Password bool   `json:"password"`
+				}
+				json.Unmarshal(req.Content, &c)
+				events <- Event{Kind: EvInput, Input: &InputRequest{Prompt: c.Prompt, Password: c.Password, msg: req}}
 			case r := <-reply:
 				gotReply = true
 				var c struct {
@@ -585,7 +658,7 @@ func (k *Kernel) stop() {
 				s.Close()
 			}
 		}
-		for _, s := range []*sock{k.shell, k.control} {
+		for _, s := range []*sock{k.shell, k.control, k.stdin} {
 			if s != nil {
 				s.s.Close()
 			}

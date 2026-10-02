@@ -132,6 +132,9 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `J` `K`                  | move cell down / up                          |
 | `M` `C` `R`              | make it markdown / code / raw                |
 | `x`                      | clear cell output                            |
+| `/` `n` `N`              | search every cell (smartcase), next, previous |
+| `za` `zM` `zR`           | fold a cell's output / fold all / unfold all |
+| `gO`                     | outline: headings and definitions            |
 | `gx`                     | open the cell's image in the system viewer   |
 | `ctrl+s`                 | save                                         |
 | `q`                      | quit (asks again if there are unsaved changes) |
@@ -139,6 +142,8 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 ![vim editing, relative line numbers across cells and flash jumps](demo/vim.gif)
 
 **Inside a cell** it's vim: motions (`hjkl w b e W B E 0 ^ $ gg G f t F T ; , % { }`), operators with motions and counts (`d c y > <`, `dd cc yy >> <<`, `3dw`, `d2j`), text objects (`iw aw i" a" i( a( i[ i{ ...`), `x X s S D C Y p P J ~ r`, `u` / `ctrl+r` undo/redo, `.` repeat, visual `v` / `V`. Enter after a `:` indents in Python.
+
+`/`, `n`, `N` and `*` search across all cells from inside one too, and `:s/old/new/g` replaces on the current line (`:%s/old/new/g` in every cell; Go regex syntax, `\1` and `&` work in the replacement).
 
 `esc` goes insert to normal, and normal back out to the notebook. `ctrl+enter` runs the cell, `shift+enter` runs and moves on, `ctrl+e` opens it in nvim.
 
@@ -163,6 +168,9 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
 |--------------------------|-------------------------------------|
 | `:w` `:q` `:q!` `:wq`    | the usual                           |
 | `:42`                    | go to notebook line 42              |
+| `:%s/old/new/g`          | replace in every cell               |
+| `:noh`                   | clear search highlighting           |
+| `:outline`               | headings and definitions            |
 | `:runall`                | run every code cell                 |
 | `:runstale`              | rerun stale and edited cells        |
 | `:set reactive`          | rerun dependents automatically      |
@@ -188,6 +196,7 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
 - pandas and polars DataFrames are drawn as real tables (index, dtypes, MultiIndex, the `...` rows); wide ones keep readable columns and drop the rest behind `…`
 - tracebacks keep their colours
 - other HTML shows as text, markdown output is rendered
+- `input()` and `getpass()` prompt right under the cell
 - plots and images (matplotlib, seaborn, PIL, anything that outputs PNG/JPEG) show inline:
   - **kitty and Ghostty**: full resolution, via the kitty graphics protocol
   - **WezTerm, iTerm2, foot**: full resolution, via sixel
@@ -232,4 +241,4 @@ The top GIF is a screen recording of kitty: `demo/play.py` drives jupytui throug
 
 ## Status
 
-Early but usable. Not there yet: images and HTML outputs show as placeholders, `input()` isn't supported, and only Python kernels (via uv) are wired up.
+Early but usable. Python kernels only (via uv), and no ipywidgets.

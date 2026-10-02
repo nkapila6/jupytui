@@ -109,7 +109,7 @@ func (m *Model) renderFlash(visible []string) []string {
 	refY, refX := m.flashRef()
 	for _, r := range m.layout {
 		y := r.line - m.offset
-		if y < 0 || y >= len(visible) {
+		if y < 0 || y >= len(visible) || !r.md && r.src < 0 {
 			continue
 		}
 		var seg string

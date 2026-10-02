@@ -21,6 +21,9 @@ const maxOutputLines = 500
 func (m *Model) renderOutputs(c *notebook.Cell, width int) ([]string, []outImg) {
 	var lines []string
 	var imgs []outImg
+	if m.folded[c] && len(c.Outputs) > 0 {
+		return []string{m.st.dim.Render(fmt.Sprintf("▸ %d output%s folded (za)", len(c.Outputs), plural(len(c.Outputs))))}, nil
+	}
 	truncated := false
 	for _, o := range c.Outputs {
 		if truncated {

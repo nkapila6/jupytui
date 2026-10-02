@@ -99,6 +99,15 @@ type Model struct {
 	detached   bool
 	remote     *remoteInfo
 	vars       *varsPanel
+	input      *inputState // a cell waiting on input()
+
+	search     string // last / pattern
+	hlsearch   bool
+	searching  bool
+	searchIn   textinput.Model
+	searchFrom mode
+	folded     map[*notebook.Cell]bool
+	outline    *outlinePanel
 
 	// stale tracking (stale.go)
 	deps     map[*notebook.Cell]cellDeps
@@ -212,6 +221,10 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach
 	m.msgIDs = map[*notebook.Cell]string{}
 	m.attach = attach
 	m.sixelCache = map[string]string{}
+	m.searchIn = textinput.New()
+	m.searchIn.Prompt = "/"
+	m.searchIn.SetVirtualCursor(false)
+	m.folded = map[*notebook.Cell]bool{}
 	m.cmd = textinput.New()
 	m.cmd.Prompt = ":"
 	m.cmd.SetVirtualCursor(false)
@@ -408,6 +421,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help = false
 			return m, nil
 		}
+		if m.input != nil {
+			return m, m.inputKey(msg)
+		}
+		if m.searching {
+			return m, m.searchKey(msg)
+		}
+		if m.outline != nil {
+			return m, m.outlineKey(msg)
+		}
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
 		}
@@ -589,8 +611,13 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 		return tea.Batch(waitEvent(e.k, c, e.ch), m.syncKitty())
 	case kernel.EvClear:
 		c.Outputs = nil
+	case kernel.EvInput:
+		return tea.Batch(waitEvent(e.k, c, e.ch), m.startInput(e.k, c, e.ev.Input))
 	case kernel.EvDone:
 		delete(m.runs, c)
+		if m.input != nil && m.input.cell == c {
+			m.input = nil // interrupted while waiting
+		}
 		if e.ev.Err == nil {
 			m.markRun(c, e.ev.ExecCount)
 		}

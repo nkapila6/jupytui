@@ -29,6 +29,7 @@ type styles struct {
 	errText, ok, busy         lipgloss.Style
 	selection, flashMatch     lipgloss.Style
 	popup                     lipgloss.Style
+	searchHit                 lipgloss.Style
 	flashLabel                lipgloss.Style
 	chroma                    string
 }
@@ -65,6 +66,7 @@ func (m *Model) applyTheme() {
 		return lipgloss.Color(light)
 	}
 	st.selection = lipgloss.NewStyle().Background(bg("#364a82", "#b6c8f4"))
+	st.searchHit = lipgloss.NewStyle().Background(bg("#e0af68", "#f2cc60")).Foreground(lipgloss.Color("#1a1b26"))
 	st.popup = lipgloss.NewStyle().Background(bg("#1f2335", "#e9e9ed")).Foreground(bg("#a9b1d6", "#3760bf"))
 	st.flashMatch = lipgloss.NewStyle().Background(bg("#3d59a1", "#b6c8f4")).Foreground(bg("#c0caf5", "#1a1b26"))
 	st.flashLabel = lipgloss.NewStyle().Background(bg("#ff007c", "#d20065")).Foreground(lipgloss.Color("#ffffff")).Bold(true)
@@ -95,6 +97,9 @@ func (m *Model) View() tea.View {
 	if m.vars != nil {
 		body, cursor = m.renderVars(), nil
 	}
+	if m.outline != nil {
+		body, cursor = m.renderOutline(), nil
+	}
 	if m.dfv != nil {
 		body, cursor = m.renderFrame(), nil
 		if m.dfv.editing {
@@ -107,7 +112,14 @@ func (m *Model) View() tea.View {
 		}
 	}
 	footer := m.renderFooter()
-	if m.mode == cmdMode {
+	if m.searching {
+		footer = m.searchIn.View()
+		if c := m.searchIn.Cursor(); c != nil {
+			cc := *c
+			cc.Y = m.height - 1
+			cursor = &cc
+		}
+	} else if m.mode == cmdMode {
 		footer = m.cmd.View()
 		if c := m.cmd.Cursor(); c != nil {
 			cc := *c
@@ -248,7 +260,19 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 
 	var cur *tea.Cursor
 	curLine := -1
-	if m.mode == editMode && m.ed != nil {
+	if m.input != nil {
+		for _, r := range layout {
+			if r.src == -1 && r.cell == m.sel {
+				x := r.textX + ansi.StringWidth(m.input.req.Prompt)
+				if c := m.input.box.Cursor(); c != nil {
+					x += c.X
+				}
+				cur = tea.NewCursor(x, 0)
+				cur.Shape = tea.CursorBar
+				curLine = r.line
+			}
+		}
+	} else if m.mode == editMode && m.ed != nil {
 		if r, x, ok := m.cursorRow(layout); ok {
 			cur = tea.NewCursor(x, 0)
 			curLine = r.line
@@ -403,6 +427,9 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow, []ou
 		hasDiag = hasDiag && m.diagOn
 		for k := range nseg {
 			seg := ansi.Cut(hlLines[r], k*inner, (k+1)*inner)
+			if hl := m.searchCols(runes); len(hl) > 0 {
+				seg = highlightRanges(seg, hl, k*inner, inner, func(s string) string { return m.st.searchHit.Render(s) })
+			}
 			if hasDiag {
 				seg = m.underlineDiag(seg, diag, r, runes, k*inner, inner)
 			}
@@ -469,6 +496,10 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow, []ou
 		}
 		for _, l := range outLines {
 			out = append(out, indent+l)
+		}
+		if m.input != nil && m.input.cell == c {
+			rows = append(rows, layoutRow{line: len(out), src: -1, textX: gutter + 2})
+			out = append(out, indent+m.inputLine())
 		}
 	}
 	return out, rows, imgs
@@ -739,6 +770,10 @@ var helpText = [][2]string{
 	{":runstale", "rerun cells marked ~ (edited) or ! (stale)"},
 	{":set [no]reactive", "rerun dependent cells automatically"},
 	{":set [no]saveoutputs", "save with or without outputs"},
+	{"/ n N *", "search all cells (smartcase), next, previous, word"},
+	{":s/a/b/g  :%s/a/b/g", "replace on this line / in every cell"},
+	{"za zM zR", "fold a cell's output / fold all / unfold all"},
+	{"gO  :outline", "headings and definitions"},
 	{":export[!] [file.py]", "write a # %% percent .py"},
 	{":restart :interrupt", "kernel control"},
 	{":env", "pick the python environment (ssh hosts too)"},

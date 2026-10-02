@@ -52,6 +52,10 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.pendingKey = ""
 		m.count = ""
 		switch p + key {
+		case "za", "zM", "zR":
+			m.fold(key)
+		case "gO":
+			m.openOutline()
 		case "]d":
 			m.jumpDiag(1)
 		case "[d":
@@ -72,8 +76,14 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	switch key {
-	case "d", "y", "g", "]", "[":
+	case "d", "y", "g", "]", "[", "z":
 		m.pendingKey = key
+	case "/":
+		return m.openSearch()
+	case "n":
+		m.searchNext(1)
+	case "N":
+		m.searchNext(-1)
 	case "j", "down":
 		if hasCount {
 			m.gotoLine(m.lineStarts()[m.sel]+n, -2)
@@ -222,12 +232,13 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 	if e.vim && e.mode == vNormal {
 		if b := m.bracket; b != "" {
 			m.bracket = ""
-			if tok == "d" {
-				if b == "]" {
-					m.jumpDiag(1)
-				} else {
-					m.jumpDiag(-1)
-				}
+			switch {
+			case b == "z" && (tok == "a" || tok == "M" || tok == "R"):
+				m.fold(tok)
+			case b == "]" && tok == "d":
+				m.jumpDiag(1)
+			case b == "[" && tok == "d":
+				m.jumpDiag(-1)
 			}
 			return nil
 		}
@@ -243,8 +254,19 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	if e.vim && e.mode == vNormal && len(e.keys) == 0 {
 		switch tok {
-		case "]", "[":
+		case "]", "[", "z":
 			m.bracket = tok
+			return nil
+		case "/":
+			return m.openSearch()
+		case "n":
+			m.searchNext(1)
+			return nil
+		case "N":
+			m.searchNext(-1)
+			return nil
+		case "*":
+			m.searchWord()
 			return nil
 		case "K":
 			return m.hover()
@@ -368,6 +390,9 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		m.export(strings.TrimSpace(arg), cmd == "export!")
 		return nil
 	}
+	if m.substitute(line) {
+		return nil
+	}
 	if target, ok := strings.CutPrefix(line, "remote "); ok {
 		host, dir, _ := strings.Cut(strings.TrimSpace(target), ":")
 		if dir == "" {
@@ -403,6 +428,10 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.restart()
 	case "env":
 		return m.openEnvPicker()
+	case "noh", "nohlsearch":
+		m.hlsearch = false
+	case "outline":
+		m.openOutline()
 	case "detach":
 		return m.detach()
 	case "vars":
