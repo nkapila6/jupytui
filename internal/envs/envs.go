@@ -20,6 +20,7 @@ const (
 	Venv    Kind = "venv"
 	Conda   Kind = "conda"
 	Python  Kind = "python"
+	Remote  Kind = "ssh"
 )
 
 type Env struct {
@@ -27,6 +28,8 @@ type Env struct {
 	Name    string
 	Python  string // interpreter path, empty for Project
 	Version string
+	Host    string // Remote: ssh host
+	Dir     string // Remote: working dir on the host
 }
 
 // Label is how the env shows up in the header and picker.
@@ -70,7 +73,56 @@ func Discover(dir string) []Env {
 	for _, p := range uvPythons() {
 		add(p)
 	}
+	for _, h := range sshHosts() {
+		out = append(out, RemoteEnv(h, RemoteDir(dir)))
+	}
 	return out
+}
+
+// RemoteEnv is a kernel on an ssh host.
+func RemoteEnv(host, dir string) Env {
+	return Env{Kind: Remote, Name: "ssh: " + host, Host: host, Dir: dir}
+}
+
+// RemoteDir guesses the notebook's folder on a remote: the same path
+// relative to the home directory, which is how most people mirror
+// projects. The kernel falls back to ~ if it isn't there.
+func RemoteDir(dir string) string {
+	home, _ := os.UserHomeDir()
+	if rel, err := filepath.Rel(home, dir); err == nil && !strings.HasPrefix(rel, "..") {
+		if rel == "." {
+			return "~"
+		}
+		return "~/" + filepath.ToSlash(rel)
+	}
+	return "~"
+}
+
+// sshHosts lists concrete Host entries from ~/.ssh/config.
+func sshHosts() []string {
+	home, _ := os.UserHomeDir()
+	f, err := os.Open(filepath.Join(home, ".ssh", "config"))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var hosts []string
+	seen := map[string]bool{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 2 || !strings.EqualFold(fields[0], "host") {
+			continue
+		}
+		for _, h := range fields[1:] {
+			if strings.ContainsAny(h, "*?!") || seen[h] {
+				continue
+			}
+			seen[h] = true
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
 }
 
 // findVenvs checks the notebook dir, its parents up to home (or /),
@@ -227,6 +279,13 @@ func Resolve(saved, dir string) (Env, bool) {
 	if saved == "" {
 		return Env{Kind: Project, Name: "project (uv)"}, true
 	}
+	if rest, ok := strings.CutPrefix(saved, "ssh:"); ok {
+		host, rdir, _ := strings.Cut(rest, ":")
+		if rdir == "" {
+			rdir = RemoteDir(dir)
+		}
+		return RemoteEnv(host, rdir), host != ""
+	}
 	p := saved
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(dir, p)
@@ -246,8 +305,11 @@ func Resolve(saved, dir string) (Env, bool) {
 // SavePath is what goes in notebook metadata: relative when the
 // interpreter lives under the notebook dir so the folder can move.
 func SavePath(e Env, dir string) string {
-	if e.Kind == Project {
+	switch e.Kind {
+	case Project:
 		return ""
+	case Remote:
+		return "ssh:" + e.Host + ":" + e.Dir
 	}
 	if rel, err := filepath.Rel(dir, e.Python); err == nil && !strings.HasPrefix(rel, "..") {
 		return rel

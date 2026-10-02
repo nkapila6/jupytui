@@ -73,6 +73,11 @@ func (m *Model) useEnv(e envs.Env) tea.Cmd {
 	}
 	m.env = e
 	m.host.opts.Cmd = kernelCmd(e)
+	m.host.opts.Remote = remoteFor(e)
+	m.remote = nil
+	if e.Kind == envs.Remote {
+		m.remote = &remoteInfo{host: e.Host}
+	}
 	saved := envs.SavePath(e, filepath.Dir(m.path))
 	if saved != m.nb.JupytuiPython() {
 		m.nb.SetJupytuiPython(saved)
@@ -85,10 +90,17 @@ func (m *Model) useEnv(e envs.Env) tea.Cmd {
 }
 
 func kernelCmd(e envs.Env) []string {
-	if e.Kind == envs.Project {
-		return nil // kernel.DefaultCmd
+	if e.Kind == envs.Project || e.Kind == envs.Remote {
+		return nil // kernel.DefaultCmd, or the remote's own uv
 	}
 	return kernel.CmdForPython(e.Python)
+}
+
+func remoteFor(e envs.Env) *kernel.Remote {
+	if e.Kind != envs.Remote {
+		return nil
+	}
+	return &kernel.Remote{Host: e.Host, Dir: e.Dir}
 }
 
 func (m *Model) renderPicker() string {
@@ -108,8 +120,11 @@ func (m *Model) renderPicker() string {
 		}
 		name := padRight(e.Label(), 24)
 		path := e.Python
-		if e.Kind == envs.Project {
+		switch e.Kind {
+		case envs.Project:
 			path = "uv run in " + filepath.Base(filepath.Dir(m.path))
+		case envs.Remote:
+			path = e.Host + ":" + e.Dir
 		}
 		if len(path) > pathW {
 			path = "…" + path[len(path)-pathW+1:]

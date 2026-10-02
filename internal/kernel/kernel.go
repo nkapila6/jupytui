@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -64,6 +65,7 @@ type Options struct {
 	Dir          string          // working dir, uv picks the project env from here
 	Cmd          []string        // {connection_file} gets substituted
 	StartTimeout time.Duration   // first uv run may have to download ipykernel
+	Remote       *Remote         // run it on another machine over ssh
 }
 
 type Kernel struct {
@@ -72,8 +74,13 @@ type Kernel struct {
 	key      []byte
 	session  string
 	cmd      *exec.Cmd // nil when we attached to someone else's kernel
-	pid      int       // process group leader (uv), for signals
+	pid      int       // process group leader (uv, or ssh for remote)
 	released bool      // handed to another owner: don't delete its files
+
+	remote      bool
+	extra       []*exec.Cmd    // ssh tunnel for remote kernels
+	remoteStdin io.WriteCloser // closing it stops the remote kernel
+	tunnelStdin io.WriteCloser // and this the tunnel
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -112,6 +119,9 @@ func Start(opts Options) (*Kernel, error) {
 	}
 	if opts.StartTimeout == 0 {
 		opts.StartTimeout = 2 * time.Minute
+	}
+	if opts.Remote != nil {
+		return startRemote(opts)
 	}
 	conn, err := newConnInfo()
 	if err != nil {
@@ -152,21 +162,8 @@ func Start(opts Options) (*Kernel, error) {
 		return nil, fmt.Errorf("start kernel: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	k := &Kernel{
-		conn:     conn,
-		connFile: connFile,
-		key:      []byte(conn.Key),
-		session:  newUUID(),
-		cmd:      cmd,
-		pid:      cmd.Process.Pid,
-		ctx:      ctx,
-		cancel:   cancel,
-		replies:  map[string]chan *Message{},
-		watchers: map[string]chan *Message{},
-		status:   make(chan string, 32),
-		dead:     make(chan struct{}),
-	}
+	k := newKernel(conn, connFile)
+	k.cmd, k.pid = cmd, cmd.Process.Pid
 	go func() {
 		k.waitErr = cmd.Wait()
 		k.stop()
@@ -178,6 +175,25 @@ func Start(opts Options) (*Kernel, error) {
 	}
 	return k, nil
 }
+
+func newKernel(conn ConnInfo, connFile string) *Kernel {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Kernel{
+		conn:     conn,
+		connFile: connFile,
+		key:      []byte(conn.Key),
+		session:  newUUID(),
+		ctx:      ctx,
+		cancel:   cancel,
+		replies:  map[string]chan *Message{},
+		watchers: map[string]chan *Message{},
+		status:   make(chan string, 32),
+		dead:     make(chan struct{}),
+	}
+}
+
+// Remote reports whether the kernel runs on another machine.
+func (k *Kernel) Remote() bool { return k.remote }
 
 func (k *Kernel) connect(ctx context.Context, timeout time.Duration) error {
 	return k.connectWith(ctx, timeout, false)
@@ -526,6 +542,10 @@ func (k *Kernel) Interrupt() error {
 	if _, err := k.request(k.control, m, 2*time.Second); err == nil {
 		return nil
 	}
+	if k.remote {
+		// k.pid is the local ssh, signalling it would just drop the connection
+		return errors.New("remote kernel didn't take the interrupt")
+	}
 	return syscall.Kill(-k.pid, syscall.SIGINT)
 }
 
@@ -547,6 +567,9 @@ func (k *Kernel) Shutdown() error {
 	select {
 	case <-k.dead:
 	case <-time.After(grace):
+		if k.remoteStdin != nil {
+			k.remoteStdin.Close()
+		}
 		syscall.Kill(-k.pid, syscall.SIGKILL)
 		<-k.dead
 	}
@@ -565,6 +588,16 @@ func (k *Kernel) stop() {
 		for _, s := range []*sock{k.shell, k.control} {
 			if s != nil {
 				s.s.Close()
+			}
+		}
+		for _, c := range []io.WriteCloser{k.remoteStdin, k.tunnelStdin} {
+			if c != nil {
+				c.Close()
+			}
+		}
+		for _, c := range k.extra {
+			if c.Process != nil {
+				syscall.Kill(-c.Process.Pid, syscall.SIGTERM)
 			}
 		}
 		if !k.released {

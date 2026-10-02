@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/nkapila6/jupytui/internal/envs"
 	"github.com/nkapila6/jupytui/internal/notebook"
 )
 
@@ -366,6 +367,13 @@ func (m *Model) runCommand(line string) tea.Cmd {
 	if cmd, arg, _ := strings.Cut(line, " "); cmd == "export" || cmd == "export!" {
 		m.export(strings.TrimSpace(arg), cmd == "export!")
 		return nil
+	}
+	if target, ok := strings.CutPrefix(line, "remote "); ok {
+		host, dir, _ := strings.Cut(strings.TrimSpace(target), ":")
+		if dir == "" {
+			dir = envs.RemoteDir(filepath.Dir(m.path))
+		}
+		return m.useEnv(envs.RemoteEnv(host, dir))
 	}
 	if name, ok := strings.CutPrefix(line, "view "); ok {
 		return m.openFrame(strings.TrimSpace(name))

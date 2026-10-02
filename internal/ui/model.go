@@ -176,6 +176,7 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach
 		env, _ = envs.Resolve("", "")
 	}
 	opts.Cmd = kernelCmd(env)
+	opts.Remote = remoteFor(env)
 	m := &Model{
 		path:    path,
 		nb:      nb,
@@ -191,6 +192,7 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach
 		lspOn:   true,
 		diagOn:  true,
 		env:     env,
+		remote:  remoteInfoFor(env),
 		msg:     startMsg,
 		number:  true,
 		// relative by default, like LazyVim

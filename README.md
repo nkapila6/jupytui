@@ -47,6 +47,17 @@ jupytui keeps track of which cells depend on which (it asks the kernel to parse 
 
 `:runstale` reruns all of them, top to bottom. `:set reactive` goes further, like [marimo](https://marimo.io): run a cell and everything downstream of it reruns on its own. Cells that only depend on an *edited* cell wait until you run that one. The footer counts what's stale.
 
+## Remote kernels
+
+Run the kernel on another machine (a GPU box, a beefy server) and keep editing locally:
+
+```
+:remote gpubox            # host from ~/.ssh/config, or user@host
+:remote gpubox:~/proj     # pick the working dir on the remote
+```
+
+or pick an ssh host in `:env`. jupytui starts the kernel there with the remote's own `uv` (`uv run --with ipykernel`, in the same folder relative to `~` as your notebook, falling back to `~`) and tunnels its ports back over ssh. Outputs, plots, completions, `:vars` and the dataframe viewer all work as if it were local. The choice is saved in the notebook. It needs key-based ssh (no password prompts) and `uv` on the remote. If the connection drops or jupytui is killed, the remote kernel exits on its own. The language server still runs locally, so it only knows about packages installed locally.
+
 ## Detach and reattach
 
 `:detach` quits jupytui but leaves the kernel running, like detaching from tmux. Cells that are still running keep going, and a small background process writes their output into the notebook as it comes. Open the notebook again and you're back on the same kernel, variables and all, with running cells still streaming. Handy for long training runs or closing the nvim float.
@@ -156,6 +167,7 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
 | `:runstale`              | rerun stale and edited cells        |
 | `:set reactive`          | rerun dependents automatically      |
 | `:detach`                | quit, keep the kernel running       |
+| `:remote host[:dir]`     | run the kernel over ssh             |
 | `:clear`                 | clear all outputs                   |
 | `:export[!] [file.py]`   | export as a `# %%` .py              |
 | `:interrupt`             | interrupt the kernel                |

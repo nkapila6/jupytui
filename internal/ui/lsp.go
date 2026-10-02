@@ -167,7 +167,9 @@ func (m *Model) startLSP() tea.Cmd {
 // pythonFor is the interpreter the LSP resolves imports against, the
 // same one the kernel runs.
 func pythonFor(e envs.Env, dir string) string {
-	if e.Kind != envs.Project {
+	// a remote kernel's packages aren't here; the local project env is
+	// the best the local language server can do
+	if e.Kind != envs.Project && e.Kind != envs.Remote {
 		return e.Python
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

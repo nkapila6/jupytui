@@ -55,20 +55,8 @@ func Attach(ctx context.Context, connFile string, pid int) (*Kernel, error) {
 	if !alive(pid) {
 		return nil, errors.New("kernel isn't running anymore")
 	}
-	cctx, cancel := context.WithCancel(context.Background())
-	k := &Kernel{
-		conn:     conn,
-		connFile: connFile,
-		key:      []byte(conn.Key),
-		session:  newUUID(),
-		pid:      pid,
-		ctx:      cctx,
-		cancel:   cancel,
-		replies:  map[string]chan *Message{},
-		watchers: map[string]chan *Message{},
-		status:   make(chan string, 32),
-		dead:     make(chan struct{}),
-	}
+	k := newKernel(conn, connFile)
+	k.pid = pid
 	// not our child, so no Wait: poll instead
 	go func() {
 		t := time.NewTicker(500 * time.Millisecond)

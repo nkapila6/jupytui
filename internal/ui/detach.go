@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/nkapila6/jupytui/internal/envs"
 	"github.com/nkapila6/jupytui/internal/kernel"
 	"github.com/nkapila6/jupytui/internal/session"
 )
@@ -120,7 +121,14 @@ func (m *Model) adopt(k *kernel.Kernel) tea.Cmd {
 // Detached reports whether the program ended with :detach.
 func (m *Model) Detached() bool { return m.detached }
 
-// remoteInfo is set when the kernel runs on another machine (remote.go).
+// remoteInfo is set when the kernel runs on another machine.
 type remoteInfo struct {
 	host string
+}
+
+func remoteInfoFor(e envs.Env) *remoteInfo {
+	if e.Kind != envs.Remote {
+		return nil
+	}
+	return &remoteInfo{host: e.Host}
 }
