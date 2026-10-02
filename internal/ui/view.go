@@ -151,6 +151,15 @@ func (m *Model) renderFooter() string {
 		text = "/" + m.flash.pattern + "  " + m.st.dim.Render(text)
 	}
 	left := st.Bold(true).Render(" " + badge + " ")
+	if m.mode == editMode && m.ed != nil && m.diagOn && m.flash == nil {
+		if d, ok := m.diagAt(m.cell(), m.ed.cur.row); ok {
+			st := m.st.errText
+			if d.sev == 2 {
+				st = m.st.busy
+			}
+			text = st.Render(diagText(d))
+		}
+	}
 	if m.msg != "" && m.flash == nil {
 		text = m.msg
 	}
@@ -158,7 +167,11 @@ func (m *Model) renderFooter() string {
 	if m.mode == editMode && m.ed != nil {
 		pending = m.ed.pending()
 	}
-	pos := fmt.Sprintf(" %s  %d/%d ", pending, m.sel+1, len(m.nb.Cells))
+	counts := ""
+	if errs, warns := m.diagCounts(); m.diagOn && errs+warns > 0 {
+		counts = fmt.Sprintf("✗%d !%d ", errs, warns)
+	}
+	pos := counts + fmt.Sprintf(" %s  %d/%d ", pending, m.sel+1, len(m.nb.Cells))
 	mid := m.st.footer.Render(" " + text)
 	gap := max(m.width-lipgloss.Width(left)-lipgloss.Width(mid)-len(pos), 1)
 	return ansi.Truncate(left+mid+strings.Repeat(" ", gap)+m.st.dim.Render(pos), m.width, "")
@@ -246,6 +259,12 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 	if m.comp != nil && cur != nil {
 		visible = m.renderCompletion(visible, cur.X, curLine-m.offset)
 	}
+	if m.sig != nil && cur != nil && m.comp == nil {
+		visible = m.renderSignature(visible, cur.X, curLine-m.offset)
+	}
+	if m.hoverText != "" && cur != nil {
+		visible = m.renderHover(visible, cur.X, curLine-m.offset)
+	}
 	if m.flash != nil {
 		visible = m.renderFlash(visible)
 	}
@@ -329,8 +348,13 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow) {
 		w := ansi.StringWidth(expandTabs(src))
 		nseg := max(1, (w+inner-1)/inner)
 		selFrom, selTo := m.selectedCols(editing, r, runes)
+		diag, hasDiag := m.diagAt(c, r)
+		hasDiag = hasDiag && m.diagOn
 		for k := range nseg {
 			seg := ansi.Cut(hlLines[r], k*inner, (k+1)*inner)
+			if hasDiag {
+				seg = m.underlineDiag(seg, diag, r, runes, k*inner, inner)
+			}
 			if s, e := max(selFrom, k*inner)-k*inner, min(selTo, (k+1)*inner)-k*inner; e > s {
 				part := ansi.Strip(ansi.Cut(seg, s, e))
 				seg = ansi.Cut(seg, 0, s) + m.st.selection.Render(padRight(part, e-s)) + ansi.Cut(seg, e, inner)
@@ -339,6 +363,13 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow) {
 			num := ""
 			if numW > 0 && k == 0 {
 				num = m.lineNumber(m.starts[i]+r, numW-1)
+				if hasDiag {
+					st := m.st.errText
+					if diag.sev == 2 {
+						st = m.st.busy
+					}
+					num = st.Bold(true).Render(ansi.Strip(num))
+				}
 			} else if numW > 0 {
 				num = strings.Repeat(" ", numW-1)
 			}
@@ -405,6 +436,29 @@ func (m *Model) lineNumber(g, w int) string {
 		return m.st.accent.Render(fmt.Sprintf("%*d", w, 0))
 	}
 	return m.st.faint.Render(fmt.Sprintf("%*d", w, max(d, -d)))
+}
+
+// underlineDiag underlines the part of a row segment a diagnostic
+// covers. off is the segment's first display column.
+func (m *Model) underlineDiag(seg string, d cellDiag, r int, line []rune, off, w int) string {
+	from, to := 0, dispCol(line, len(line))
+	if r == d.row {
+		from = dispCol(line, d.col)
+	}
+	if r == d.endRow {
+		to = dispCol(line, d.endCol)
+	}
+	to = max(to, from+1)
+	s, e := max(from, off)-off, min(to, off+w)-off
+	if e <= s {
+		return seg
+	}
+	st := m.st.errText
+	if d.sev == 2 {
+		st = m.st.busy
+	}
+	part := ansi.Strip(ansi.Cut(seg, s, e))
+	return ansi.Cut(seg, 0, s) + st.Underline(true).Render(padRight(part, e-s)) + ansi.Cut(seg, e, w)
 }
 
 // selectedCols is the visual selection on source line r, as display
@@ -633,6 +687,9 @@ var helpText = [][2]string{
 	{":<n>", "jump to cell n"},
 	{":set [no]nu [no]rnu", "line numbers / relative numbers"},
 	{":set [no]vim", "vim editing inside cells"},
+	{"K  gd", "hover docs / go to definition (lsp)"},
+	{"]d [d", "next / previous diagnostic"},
+	{":set [no]lsp [no]diag", "language server / diagnostics"},
 }
 
 func (m *Model) renderHelp() string {
@@ -647,4 +704,60 @@ func (m *Model) renderHelp() string {
 		Padding(1, 2).
 		Render(b.String())
 	return lipgloss.Place(max(m.width, minWidth), m.bodyHeight(), lipgloss.Center, lipgloss.Center, box)
+}
+
+// drawBox overlays lines (already styled) as a box at x, y in the
+// visible body, flipping above the anchor row when it doesn't fit below.
+func (m *Model) drawBox(visible, lines []string, x, anchorY int, below bool) []string {
+	w := 0
+	for _, l := range lines {
+		w = max(w, ansi.StringWidth(l))
+	}
+	w += 2
+	h := len(lines)
+	y := anchorY + 1
+	if !below || y+h > len(visible) {
+		y = anchorY - h
+	}
+	if y < 0 {
+		y = anchorY + 1
+	}
+	x = max(0, min(x, max(m.width, minWidth)-w))
+	for i, l := range lines {
+		if y+i >= len(visible) {
+			break
+		}
+		box := m.st.popup.Render(" " + padRight(l, w-2) + " ")
+		line := visible[y+i]
+		if lw := ansi.StringWidth(line); lw < x {
+			line += strings.Repeat(" ", x-lw)
+		}
+		visible[y+i] = ansi.Cut(line, 0, x) + box + ansi.Cut(line, x+w, ansi.StringWidth(line))
+	}
+	return visible
+}
+
+func (m *Model) renderHover(visible []string, x, y int) []string {
+	w := min(max(m.width-gutter-8, 20), 72)
+	body := m.markdown(m.hoverText, w)
+	lines := strings.Split(ansi.Strip(body), "\n")
+	if len(lines) > 14 {
+		lines = append(lines[:14], "…")
+	}
+	return m.drawBox(visible, lines, x, y, true)
+}
+
+// renderSignature shows the call's signature above the cursor with the
+// current parameter picked out.
+func (m *Model) renderSignature(visible []string, x, y int) []string {
+	s := m.sig
+	label := []rune(s.Label)
+	text := s.Label
+	if s.ActiveParameter >= 0 && s.ActiveParameter < len(s.Params) {
+		p := s.Params[s.ActiveParameter]
+		a, b := min(p[0], len(label)), min(p[1], len(label))
+		text = string(label[:a]) + m.st.accent.Bold(true).Underline(true).Render(string(label[a:b])) + m.st.popup.Render(string(label[b:]))
+	}
+	text = ansi.Truncate(text, max(m.width-x-4, 20), "…")
+	return m.drawBox(visible, []string{text}, x-2, y, false)
 }

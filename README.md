@@ -87,7 +87,14 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 
 `esc` goes insert to normal, and normal back out to the notebook. `ctrl+enter` runs the cell, `shift+enter` runs and moves on, `ctrl+e` opens it in nvim.
 
-**Completions** pop up in insert mode after `.` or a couple of letters (or on `tab` / `ctrl+space`). They come from the running kernel, so they know what's actually in memory: `df.` lists your real columns. `ctrl+n` / `ctrl+p` (or `tab`, arrows) to move, `enter` to accept, `esc` to close the menu. `tab` still indents when there's nothing to complete.
+**Completions** pop up in insert mode after `.` or a couple of letters (or on `tab` / `ctrl+space`). They come from two places: the running kernel, which knows what's actually in memory (`df.` lists your real columns), and [basedpyright](https://github.com/DetachHead/basedpyright), which knows code that hasn't run yet. Kernel results come first. `ctrl+n` / `ctrl+p` (or `tab`, arrows) to move, `enter` to accept, `esc` to close the menu. `tab` still indents when there's nothing to complete.
+
+**LSP**: basedpyright starts the first time you open a code cell, via `uvx` (first run downloads it once; nothing goes into your project, and you don't need node). It sees all code cells as one file and uses the same Python env as the kernel. You get:
+
+- diagnostics: the line number turns red/yellow, the range is underlined, the message shows in the footer when your cursor is on the line, and the footer counts them. `]d` / `[d` jump between them across cells
+- `K` hover docs, `gd` go to definition (jumps to the cell, or opens library code in your host nvim), signature help after `(` and `,`
+
+It runs basedpyright's `basic` checks with "unused expression" off, since a bare `df.head()` at the end of a cell is the point of a notebook. `:set nolsp` turns it off, `:set nodiag` just hides diagnostics.
 
 **Line numbers** run across the whole notebook as if it were one buffer, relative by default like LazyVim. So `5j` inside a cell moves exactly the number of lines shown, crossing into other cells, and `:42` / `42G` go to notebook line 42. Outputs don't count as lines.
 
@@ -108,6 +115,8 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `:set nu` `:set nonu`    | line numbers on / off               |
 | `:set rnu` `:set nornu`  | relative line numbers on / off      |
 | `:set novim` `:set vim`  | plain editing in cells instead of vim |
+| `:set nolsp` `:set lsp`  | language server off / on            |
+| `:set nodiag` `:set diag`| hide / show diagnostics             |
 
 `ctrl+enter` and `shift+enter` need a terminal that supports the kitty keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). In the notebook, `ctrl+r` runs and moves on everywhere.
 

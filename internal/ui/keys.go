@@ -49,6 +49,10 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.pendingKey = ""
 		m.count = ""
 		switch p + key {
+		case "]d":
+			m.jumpDiag(1)
+		case "[d":
+			m.jumpDiag(-1)
 		case "dd":
 			m.deleteCell()
 		case "yy":
@@ -61,7 +65,7 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	switch key {
-	case "d", "y", "g":
+	case "d", "y", "g", "]", "[":
 		m.pendingKey = key
 	case "j", "down":
 		m.sel = min(m.sel+steps, len(m.nb.Cells)-1)
@@ -200,8 +204,30 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 			}
 		}
 	}
+	if e.vim && e.mode == vNormal {
+		if b := m.bracket; b != "" {
+			m.bracket = ""
+			if tok == "d" {
+				if b == "]" {
+					m.jumpDiag(1)
+				} else {
+					m.jumpDiag(-1)
+				}
+			}
+			return nil
+		}
+		if len(e.keys) == 1 && e.keys[0] == "g" && tok == "d" {
+			e.keys = nil
+			return m.definition()
+		}
+	}
 	if e.vim && e.mode == vNormal && len(e.keys) == 0 {
 		switch tok {
+		case "]", "[":
+			m.bracket = tok
+			return nil
+		case "K":
+			return m.hover()
 		case ":":
 			m.commitEdit()
 			m.cmdFrom = editMode
@@ -217,6 +243,16 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 	res := e.key(tok)
 	m.commitEdit()
 	compCmd := m.afterInsertKey(tok)
+	if e.mode != vInsert {
+		m.sig = nil
+	} else {
+		switch tok {
+		case "(", ",":
+			compCmd = tea.Batch(compCmd, m.signatureHelp())
+		case ")":
+			m.sig = nil
+		}
+	}
 	switch res {
 	case edLeave:
 		m.stopEdit()
@@ -378,6 +414,21 @@ func (m *Model) setOption(opt string) {
 		m.relative = true
 	case "nornu", "norelativenumber":
 		m.relative = false
+	case "lsp":
+		m.lspOn = true
+		if m.lspState == "failed" {
+			m.lspState = ""
+		}
+	case "nolsp":
+		m.lspOn = false
+		if m.lsp != nil {
+			go m.lsp.Close()
+			m.lsp, m.lspState, m.diags = nil, "", nil
+		}
+	case "diag":
+		m.diagOn = true
+	case "nodiag":
+		m.diagOn = false
 	case "vim":
 		m.vimOn = true
 		if m.ed != nil {

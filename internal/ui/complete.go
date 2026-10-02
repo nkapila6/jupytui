@@ -70,9 +70,6 @@ func (m *Model) requestCompletion() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// lspCompletion is filled in once the LSP client exists.
-func (m *Model) lspCompletion(seq, row int) tea.Cmd { return nil }
-
 func (m *Model) handleCompletion(msg compMsg) {
 	e := m.ed
 	if msg.seq != m.compSeq || e == nil || m.mode != editMode || e.mode != vInsert || msg.row != e.cur.row {

@@ -79,6 +79,7 @@ func (m *Model) useEnv(e envs.Env) tea.Cmd {
 		m.dirty = true
 	}
 	cmd := m.restart()
+	m.setLSPPython()
 	m.msg = "switching kernel to " + e.Label()
 	return cmd
 }

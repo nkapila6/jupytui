@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"charm.land/glamour/v2"
 	"github.com/nkapila6/jupytui/internal/envs"
 	"github.com/nkapila6/jupytui/internal/kernel"
+	"github.com/nkapila6/jupytui/internal/lsp"
 	"github.com/nkapila6/jupytui/internal/notebook"
 )
 
@@ -94,7 +96,21 @@ type Model struct {
 	comp       *compState
 	compSeq    int // latest completion request
 	compFrom   int // request the open popup was built from
-	env        envs.Env
+
+	lsp       *lsp.Client
+	lspState  string // "", starting, ready, failed
+	lspOn     bool
+	diagOn    bool
+	lspCtx    context.Context
+	lspCancel context.CancelFunc
+	doc       lspDoc
+	docVer    int
+	diags     map[*notebook.Cell][]cellDiag
+	hoverText string
+	sig       *lsp.Signature
+	sigSeq    int
+	bracket   string // first key of ]d / [d
+	env       envs.Env
 
 	width, height int
 	dirty         bool
@@ -139,12 +155,15 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 		mdCache: map[string]string{},
 		eds:     map[*notebook.Cell]*editor{},
 		vimOn:   true,
+		lspOn:   true,
+		diagOn:  true,
 		env:     env,
 		msg:     startMsg,
 		number:  true,
 		// relative by default, like LazyVim
 		relative: true,
 	}
+	m.lspCtx, m.lspCancel = context.WithCancel(context.Background())
 	m.cmd = textinput.New()
 	m.cmd.Prompt = ":"
 	m.cmd.SetVirtualCursor(false)
@@ -154,6 +173,10 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 
 // Close shuts down kernels and cleans temp files. Call after Run returns.
 func (m *Model) Close() {
+	m.lspCancel()
+	if m.lsp != nil {
+		m.lsp.Close()
+	}
 	m.host.Close()
 	m.ext.cleanup()
 }
@@ -220,7 +243,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 
 	case editorDoneMsg, editorPollMsg:
-		return m, m.handleEditor(msg)
+		cmd := m.handleEditor(msg)
+		m.lspSync()
+		return m, cmd
 
 	case tea.PasteMsg:
 		switch {
@@ -242,7 +267,45 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleCompletion(msg)
 		return m, nil
 
+	case lspReadyMsg:
+		return m, m.handleLSPReady(msg)
+
+	case lspNotifyMsg:
+		if msg.c != m.lsp {
+			return m, nil
+		}
+		m.handleDiagnostics(msg.n)
+		return m, waitLSP(m.lsp)
+
+	case lspDeadMsg:
+		if msg.c == m.lsp {
+			m.lsp = nil
+			m.lspState = "failed"
+			m.diags = nil
+			m.msg = "language server exited"
+		}
+		return m, nil
+
+	case hoverMsg:
+		if strings.TrimSpace(msg.text) == "" {
+			m.msg = "no hover info"
+		}
+		m.hoverText = msg.text
+		return m, nil
+
+	case defMsg:
+		return m, m.handleDefinition(msg)
+
+	case sigMsg:
+		if msg.seq == m.sigSeq && m.mode == editMode && m.ed != nil && m.ed.mode == vInsert {
+			m.sig = msg.sig
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
+		// popups like hover go away on the next key, which still counts
+		m.hoverText = ""
+		defer m.lspSync()
 		if m.help {
 			m.help = false
 			return m, nil
@@ -304,6 +367,9 @@ func (m *Model) startEdit(how string) tea.Cmd {
 		m.ed.setMode(vNormal)
 	}
 	m.ed.clamp()
+	if m.cell().Type == notebook.Code {
+		return m.startLSP()
+	}
 	return nil
 }
 
@@ -330,6 +396,7 @@ func (m *Model) stopEdit() {
 	}
 	m.ed = nil
 	m.comp = nil
+	m.sig = nil
 	m.mode = normalMode
 }
 
