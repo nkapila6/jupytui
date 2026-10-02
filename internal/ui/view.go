@@ -609,6 +609,7 @@ var helpText = [][2]string{
 	{"ctrl+s :w", "save"},
 	{"q :q :q! :wq", "quit"},
 	{":runall :clear", "run all / clear all outputs"},
+	{":export[!] [file.py]", "write a # %% percent .py"},
 	{":restart :interrupt", "kernel control"},
 	{":<n>", "jump to cell n"},
 	{":set [no]nu [no]rnu", "line numbers / relative numbers"},

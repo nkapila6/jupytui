@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"errors"
+	"io/fs"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -288,6 +291,10 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		m.gotoLine(n-1, -2)
 		return nil
 	}
+	if cmd, arg, _ := strings.Cut(line, " "); cmd == "export" || cmd == "export!" {
+		m.export(strings.TrimSpace(arg), cmd == "export!")
+		return nil
+	}
 	if opt, ok := strings.CutPrefix(line, "set "); ok {
 		m.setOption(strings.TrimSpace(opt))
 		return nil
@@ -324,6 +331,23 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		m.msg = "unknown command: " + line
 	}
 	return nil
+}
+
+func (m *Model) export(path string, force bool) {
+	m.commitEdit()
+	if path == "" {
+		path = notebook.PyPath(m.path)
+	} else if !filepath.IsAbs(path) {
+		path = filepath.Join(filepath.Dir(m.path), path)
+	}
+	if err := m.nb.ExportPercent(path, force); err != nil {
+		m.msg = "export: " + err.Error()
+		if errors.Is(err, fs.ErrExist) {
+			m.msg = filepath.Base(path) + " exists, :export! to overwrite"
+		}
+		return
+	}
+	m.msg = "exported " + filepath.Base(path)
 }
 
 func (m *Model) setOption(opt string) {

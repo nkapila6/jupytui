@@ -34,6 +34,17 @@ If the file doesn't exist it gets created on first save. The kernel starts in th
 
 `jupytui exec notebook.ipynb` runs every code cell headless and prints the output, mostly useful for debugging.
 
+## Export to .py
+
+```sh
+jupytui export notebook.ipynb            # writes notebook.py
+jupytui export -o out.py -f notebook.ipynb
+```
+
+or `:export` / `:export other.py` inside jupytui (`:export!` to overwrite).
+
+The output is the "percent" format: every cell starts with `# %%`, markdown cells become `# %% [markdown]` with the text as comments, and magics like `%matplotlib` or `!pip` are commented out so the file is plain Python. jupytext, VS Code and the nvim notebook plugins all read it, and `jupytext --to ipynb` turns it back into the same cells.
+
 ## Keys
 
 Press `?` inside jupytui for the full list.
@@ -78,6 +89,7 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `:42`                    | go to notebook line 42              |
 | `:runall`                | run every code cell                 |
 | `:clear`                 | clear all outputs                   |
+| `:export[!] [file.py]`   | export as a `# %%` .py              |
 | `:interrupt`             | interrupt the kernel                |
 | `:restart`               | restart the kernel                  |
 | `:set nu` `:set nonu`    | line numbers on / off               |

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -18,6 +19,8 @@ import (
 
 const usage = `usage: jupytui <notebook.ipynb>        open (or create) a notebook
        jupytui exec <notebook.ipynb>   run all cells headless and print outputs
+       jupytui export [-f] [-o out.py] <notebook.ipynb>
+                                       write a percent-format .py (# %% cells)
        jupytui --version`
 
 // set by the Makefile; go install builds fall back to the module version
@@ -42,6 +45,8 @@ func main() {
 		return
 	case len(args) == 2 && args[0] == "exec":
 		err = execAll(args[1])
+	case len(args) >= 2 && args[0] == "export":
+		err = export(args[1:])
 	case len(args) == 1 && args[0] != "-h" && args[0] != "--help":
 		err = runTUI(args[0])
 	default:
@@ -81,6 +86,31 @@ func runTUI(path string) error {
 	_, err = p.Run()
 	m.Close()
 	return err
+}
+
+func export(args []string) error {
+	fset := flag.NewFlagSet("export", flag.ContinueOnError)
+	out := fset.String("o", "", "output path (default: notebook name with .py)")
+	force := fset.Bool("f", false, "overwrite an existing file")
+	if err := fset.Parse(args); err != nil {
+		return err
+	}
+	if fset.NArg() != 1 {
+		return errors.New("export needs exactly one notebook")
+	}
+	path := fset.Arg(0)
+	nb, err := notebook.Load(path)
+	if err != nil {
+		return err
+	}
+	if *out == "" {
+		*out = notebook.PyPath(path)
+	}
+	if err := nb.ExportPercent(*out, *force); err != nil {
+		return err
+	}
+	fmt.Println("wrote", *out)
+	return nil
 }
 
 // execAll runs every code cell headless and prints outputs. Handy for
