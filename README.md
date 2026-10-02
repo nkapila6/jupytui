@@ -12,9 +12,15 @@ Notebooks are saved in the same format Jupyter writes, so diffs stay clean and t
 
 ## Install
 
+Grab a binary for macOS or Linux (arm64/amd64) from [releases](https://github.com/nkapila6/jupytui/releases), untar it, and put `jupytui` somewhere on your `PATH`.
+
+Or with Go:
+
 ```sh
 go install github.com/nkapila6/jupytui/cmd/jupytui@latest
 ```
+
+Or from a clone: `make install` (static, stripped build). `make dist` builds the release tarballs.
 
 You also need [uv](https://docs.astral.sh/uv/) on your `PATH`.
 
