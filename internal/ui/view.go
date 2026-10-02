@@ -184,8 +184,14 @@ func (m *Model) renderFooter() string {
 		pending = m.ed.pending()
 	}
 	counts := ""
+	if stale, mod := m.staleCount(); stale+mod > 0 {
+		counts = m.st.busy.Render(fmt.Sprintf("%d stale ", stale+mod))
+	}
+	if m.reactive {
+		counts += m.st.dim.Render("reactive ")
+	}
 	if errs, warns := m.diagCounts(); m.diagOn && errs+warns > 0 {
-		counts = fmt.Sprintf("✗%d !%d ", errs, warns)
+		counts += fmt.Sprintf("✗%d !%d ", errs, warns)
 	}
 	pos := counts + fmt.Sprintf(" %s  %d/%d ", pending, m.sel+1, len(m.nb.Cells))
 	mid := m.st.footer.Render(" " + text)
@@ -217,6 +223,7 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 		width     = max(m.width, minWidth)
 	)
 	m.starts = m.lineStarts()
+	m.statuses = m.cellStatuses()
 	var imgs []outImg
 	for i, c := range m.nb.Cells {
 		if i == m.sel {
@@ -562,6 +569,13 @@ func (m *Model) prompt(i int, c *notebook.Cell, selected bool) string {
 	if selected {
 		st = m.st.accent
 	}
+	// ~ edited since it ran, ! something it depends on changed
+	switch m.statuses[c] {
+	case statusModified:
+		return st.Render(fmt.Sprintf("%*s ", gutter-1, "~"+p))
+	case statusStale, statusStaleEdited:
+		return m.st.busy.Render(fmt.Sprintf("%*s ", gutter-1, "!"+p))
+	}
 	return st.Render(fmt.Sprintf("%*s ", gutter-1, p))
 }
 
@@ -722,6 +736,8 @@ var helpText = [][2]string{
 	{"ctrl+s :w", "save"},
 	{"q :q :q! :wq", "quit"},
 	{":runall :clear", "run all / clear all outputs"},
+	{":runstale", "rerun cells marked ~ (edited) or ! (stale)"},
+	{":set [no]reactive", "rerun dependent cells automatically"},
 	{":export[!] [file.py]", "write a # %% percent .py"},
 	{":restart :interrupt", "kernel control"},
 	{":env", "pick the python environment"},

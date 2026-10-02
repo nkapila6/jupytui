@@ -95,10 +95,21 @@ type Model struct {
 	ext        *extEdit
 	picker     *envPicker
 	vars       *varsPanel
-	dfv        *frameView
-	comp       *compState
-	compSeq    int // latest completion request
-	compFrom   int // request the open popup was built from
+
+	// stale tracking (stale.go)
+	deps     map[*notebook.Cell]cellDeps
+	depsSrc  map[*notebook.Cell]string
+	depsBusy bool
+	depsSeq  int
+	anonIDs  map[*notebook.Cell]string
+	ran      map[*notebook.Cell]runInfo
+	execSrc  map[*notebook.Cell]string
+	statuses map[*notebook.Cell]cellStatus // per render
+	reactive bool
+	dfv      *frameView
+	comp     *compState
+	compSeq  int // latest completion request
+	compFrom int // request the open popup was built from
 
 	lsp       *lsp.Client
 	lspState  string // "", starting, ready, failed
@@ -185,6 +196,11 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 	m.gfxMode = detectGraphics()
 	m.cellW, m.cellH = cellPixels()
 	m.gfx = map[*notebook.Output]*gfxImage{}
+	m.deps = map[*notebook.Cell]cellDeps{}
+	m.depsSrc = map[*notebook.Cell]string{}
+	m.anonIDs = map[*notebook.Cell]string{}
+	m.ran = map[*notebook.Cell]runInfo{}
+	m.execSrc = map[*notebook.Cell]string{}
 	m.sixelCache = map[string]string{}
 	m.cmd = textinput.New()
 	m.cmd.Prompt = ":"
@@ -240,7 +256,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.k = msg.Kernel
 		m.kstate = "idle"
-		cmds := []tea.Cmd{m.waitStatus()}
+		cmds := []tea.Cmd{m.waitStatus(), m.depsCmd()}
 		for _, c := range m.pending {
 			cmds = append(cmds, m.submit(c))
 		}
@@ -301,6 +317,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case envsMsg:
 		m.handleEnvs(msg)
 		return m, nil
+
+	case depsMsg:
+		return m, m.handleDeps(msg)
 
 	case varsMsg:
 		m.handleVars(msg)
@@ -381,13 +400,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.flash != nil {
 			return m, m.flashKey(msg)
 		}
+		var cmd tea.Cmd
 		switch m.mode {
 		case editMode:
-			return m, m.editKey(msg)
+			cmd = m.editKey(msg)
 		case cmdMode:
-			return m, m.cmdKey(msg)
+			cmd = m.cmdKey(msg)
+		default:
+			cmd = m.normalKey(msg)
 		}
-		return m, m.normalKey(msg)
+		// re-analyse names once you're out of a cell (edits, pastes, deletes)
+		if m.mode != editMode {
+			cmd = tea.Batch(cmd, m.depsCmd())
+		}
+		return m, cmd
 	}
 
 	var cmd tea.Cmd
@@ -500,6 +526,7 @@ func (m *Model) execute(c *notebook.Cell) tea.Cmd {
 	c.ClearOutputs()
 	m.dirty = true
 	m.runs[c] = queued
+	m.execSrc[c] = c.Source
 	var cmd tea.Cmd
 	if m.k == nil {
 		m.pending = append(m.pending, c)
@@ -543,7 +570,10 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 		c.Outputs = nil
 	case kernel.EvDone:
 		delete(m.runs, c)
-		refresh = m.refreshVarsAfterRun(e.ev)
+		if e.ev.Err == nil {
+			m.markRun(c, e.ev.ExecCount)
+		}
+		refresh = tea.Batch(m.refreshVarsAfterRun(e.ev), m.depsCmd(), m.reactiveRun())
 		if e.ev.ExecCount > 0 {
 			n := e.ev.ExecCount
 			c.ExecutionCount = &n
@@ -575,6 +605,9 @@ func (m *Model) restart() tea.Cmd {
 	m.kstate = "restarting"
 	m.runs = map[*notebook.Cell]runState{}
 	m.pending = nil
+	// a fresh kernel has none of the old state, so nothing has "run"
+	m.ran = map[*notebook.Cell]runInfo{}
+	m.depsBusy = false
 	m.msg = "restarting kernel"
 	return m.host.start(old)
 }

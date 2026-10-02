@@ -399,6 +399,8 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.openVars()
 	case "runall", "ra":
 		return m.runAll()
+	case "runstale", "rs":
+		return m.runStale()
 	case "clear":
 		for _, c := range m.nb.Cells {
 			if len(c.Outputs) > 0 || c.ExecutionCount != nil {
@@ -480,6 +482,11 @@ func (m *Model) setOption(opt string) {
 			go m.lsp.Close()
 			m.lsp, m.lspState, m.diags = nil, "", nil
 		}
+	case "reactive":
+		m.reactive = true
+		m.msg = "reactive: dependent cells rerun automatically"
+	case "noreactive":
+		m.reactive = false
 	case "diag":
 		m.diagOn = true
 	case "nodiag":
