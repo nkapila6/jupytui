@@ -93,6 +93,12 @@ type gfxImage struct {
 func (m *Model) imgSize(img image.Image, width int) (int, int) {
 	b := img.Bounds()
 	cw, ch := m.cellW, m.cellH
+	// browsers draw a 552px plot at 552 points, i.e. twice the pixels on
+	// a retina screen; terminals report device pixels, so match that or
+	// plots come out half the size they'd be in Jupyter
+	if cw >= 14 {
+		cw, ch = cw/2, ch/2
+	}
 	cols := min(width, max((b.Dx()+cw-1)/cw, 1))
 	rows := max((cols*cw*b.Dy()+b.Dx()*ch-1)/(b.Dx()*ch), 1)
 	if maxRows := max(m.bodyHeight()-3, 4); rows > maxRows {
