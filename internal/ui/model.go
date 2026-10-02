@@ -3,6 +3,7 @@ package ui
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -129,6 +130,9 @@ type Model struct {
 	mdCache map[string]string
 	// rendered dataframe tables by width + html
 	tableCache map[string]string
+	imgCache   map[imgKey][]string
+	imgDir     string // temp files for gx
+	imgN       int
 	mdr        *glamour.TermRenderer
 	mdrW       int
 }
@@ -175,6 +179,9 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 
 // Close shuts down kernels and cleans temp files. Call after Run returns.
 func (m *Model) Close() {
+	if m.imgDir != "" {
+		os.RemoveAll(m.imgDir)
+	}
 	m.lspCancel()
 	if m.lsp != nil {
 		m.lsp.Close()

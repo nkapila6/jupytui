@@ -62,6 +62,8 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.msg = "yanked cell"
 		case "gg":
 			jump(0)
+		case "gx":
+			m.openImage()
 		}
 		return nil
 	}
@@ -229,6 +231,11 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 		if len(e.keys) == 1 && e.keys[0] == "g" && tok == "d" {
 			e.keys = nil
 			return m.definition()
+		}
+		if len(e.keys) == 1 && e.keys[0] == "g" && tok == "x" {
+			e.keys = nil
+			m.openImage()
+			return nil
 		}
 	}
 	if e.vim && e.mode == vNormal && len(e.keys) == 0 {

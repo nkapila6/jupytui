@@ -24,6 +24,11 @@ func (m *Model) renderOutputs(c *notebook.Cell, width int) []string {
 		if truncated {
 			break
 		}
+		// images are already sized to width, skip the wrapping below
+		if img, ok := m.renderImage(o, width); ok {
+			lines = append(lines, img...)
+			continue
+		}
 		var s string
 		var style *lipgloss.Style
 		switch o.OutputType {

@@ -73,6 +73,7 @@ func (m *Model) applyTheme() {
 	m.hlCache = map[string]string{}
 	m.mdCache = map[string]string{}
 	m.tableCache = map[string]string{}
+	m.imgCache = map[imgKey][]string{}
 	m.mdr = nil
 }
 
@@ -669,6 +670,7 @@ var helpText = [][2]string{
 	{"J K", "move cell down / up"},
 	{"M C R", "make markdown / code / raw"},
 	{"x", "clear cell output"},
+	{"gx", "open the cell's image in the system viewer"},
 	{"ctrl+s :w", "save"},
 	{"q :q :q! :wq", "quit"},
 	{":runall :clear", "run all / clear all outputs"},

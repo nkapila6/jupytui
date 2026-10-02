@@ -81,6 +81,7 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `J` `K`                  | move cell down / up                          |
 | `M` `C` `R`              | make it markdown / code / raw                |
 | `x`                      | clear cell output                            |
+| `gx`                     | open the cell's image in the system viewer   |
 | `ctrl+s`                 | save                                         |
 | `q`                      | quit (asks again if there are unsaved changes) |
 
@@ -127,7 +128,7 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
 - pandas and polars DataFrames are drawn as real tables (index, dtypes, MultiIndex, the `...` rows); wide ones keep readable columns and drop the rest behind `…`
 - tracebacks keep their colours
 - other HTML shows as text, markdown output is rendered
-- plots and images: see below
+- plots and images (matplotlib, seaborn, PIL, anything that outputs PNG/JPEG) are drawn inline with half-block characters: two pixels per character cell, true colour. It's low-res but readable, and works in any terminal including nvim's. `gx` on the cell opens the full image in your system viewer (also how you see SVG output)
 
 ## Neovim (LazyVim)
 
