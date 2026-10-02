@@ -85,6 +85,9 @@ func (m *Model) View() tea.View {
 	if m.help {
 		body, cursor = m.renderHelp(), nil
 	}
+	if m.picker != nil {
+		body, cursor = m.renderPicker(), nil
+	}
 	footer := m.renderFooter()
 	if m.mode == cmdMode {
 		footer = m.cmd.View()
@@ -117,7 +120,7 @@ func (m *Model) renderHeader() string {
 	default:
 		dot = m.st.errText
 	}
-	right := m.st.dim.Render(m.nb.KernelName()+" ") + dot.Render("● "+m.kstate) + " "
+	right := m.st.dim.Render(m.env.Label()+" ") + dot.Render("● "+m.kstate) + " "
 	gap := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	return left + strings.Repeat(" ", gap) + right
 }
@@ -473,22 +476,32 @@ func (m *Model) renderMarkdownCell(i int, c *notebook.Cell, selected bool, boxW 
 	if selected {
 		bar = m.st.accent.Render("▌")
 	}
+	// same number column as code cells; rendered markdown doesn't map to
+	// source lines, so only the cell's first line gets a number
+	numW := 0
+	if m.number || m.relative {
+		numW = max(2, len(itoa(m.starts[len(m.starts)-1]))) + 1
+	}
 	src := strings.TrimSpace(c.Source)
 	var body string
 	if src == "" {
 		body = m.st.dim.Render("empty markdown cell")
 	} else {
-		body = m.markdown(src, boxW-2)
+		body = m.markdown(src, boxW-2-numW)
 	}
 	var out []string
 	var rows []layoutRow
 	for j, l := range strings.Split(body, "\n") {
 		g := strings.Repeat(" ", gutter)
+		num := strings.Repeat(" ", numW)
 		if j == 0 {
 			g = m.cellIndex(i) + strings.Repeat(" ", gutter-3)
+			if numW > 0 {
+				num = m.lineNumber(m.starts[i], numW-1) + " "
+			}
 		}
-		out = append(out, g+bar+" "+l)
-		rows = append(rows, layoutRow{line: j, md: true, textX: gutter + 2, width: boxW - 2})
+		out = append(out, g+bar+" "+num+l)
+		rows = append(rows, layoutRow{line: j, md: true, textX: gutter + 2 + numW, width: boxW - 2 - numW})
 	}
 	return out, rows
 }
@@ -611,6 +624,7 @@ var helpText = [][2]string{
 	{":runall :clear", "run all / clear all outputs"},
 	{":export[!] [file.py]", "write a # %% percent .py"},
 	{":restart :interrupt", "kernel control"},
+	{":env", "pick the python environment"},
 	{":<n>", "jump to cell n"},
 	{":set [no]nu [no]rnu", "line numbers / relative numbers"},
 	{":set [no]vim", "vim editing inside cells"},

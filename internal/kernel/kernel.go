@@ -25,6 +25,13 @@ import (
 // ipykernel on top so the project doesn't need it as a dependency.
 var DefaultCmd = []string{"uv", "run", "--with", "ipykernel", "python", "-c", bootstrap, "-f", "{connection_file}"}
 
+// CmdForPython runs the kernel on a specific interpreter (a venv, conda
+// env or bare python), with ipykernel overlaid by uv so the env itself
+// doesn't need it installed.
+func CmdForPython(python string) []string {
+	return []string{"uv", "run", "--no-project", "--python", python, "--with", "ipykernel", "python", "-c", bootstrap, "-f", "{connection_file}"}
+}
+
 // bootstrap starts ipykernel with a watchdog on jupytui's pid. ipykernel's
 // own parent poller only watches its direct parent, which is uv, and uv
 // happily outlives us if we get SIGKILLed or the terminal goes away.

@@ -391,6 +391,38 @@ func (nb *Notebook) KernelName() string {
 	return md.Kernelspec.Name
 }
 
+// JupytuiPython is the interpreter picked with :env, saved under
+// metadata.jupytui.python. Empty means the default project env.
+func (nb *Notebook) JupytuiPython() string {
+	var md struct {
+		Jupytui struct {
+			Python string `json:"python"`
+		} `json:"jupytui"`
+	}
+	json.Unmarshal(nb.raw["metadata"], &md)
+	return md.Jupytui.Python
+}
+
+// SetJupytuiPython stores (or with "" removes) the picked interpreter,
+// leaving every other metadata key as it was.
+func (nb *Notebook) SetJupytuiPython(p string) {
+	md := map[string]json.RawMessage{}
+	json.Unmarshal(nb.raw["metadata"], &md)
+	jt := map[string]json.RawMessage{}
+	json.Unmarshal(md["jupytui"], &jt)
+	if p == "" {
+		delete(jt, "python")
+	} else {
+		jt["python"], _ = encode(p)
+	}
+	if len(jt) == 0 {
+		delete(md, "jupytui")
+	} else {
+		md["jupytui"], _ = encode(jt)
+	}
+	nb.raw["metadata"], _ = encode(md)
+}
+
 // Language is the notebook's language for highlighting, default python.
 func (nb *Notebook) Language() string {
 	var md struct {

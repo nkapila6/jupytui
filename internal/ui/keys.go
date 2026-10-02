@@ -314,6 +314,8 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		}
 	case "restart":
 		return m.restart()
+	case "env":
+		return m.openEnvPicker()
 	case "runall", "ra":
 		return m.runAll()
 	case "clear":

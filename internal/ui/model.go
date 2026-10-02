@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	"github.com/nkapila6/jupytui/internal/envs"
 	"github.com/nkapila6/jupytui/internal/kernel"
 	"github.com/nkapila6/jupytui/internal/notebook"
 )
@@ -89,6 +90,8 @@ type Model struct {
 	undo       []deleted
 	help       bool
 	ext        *extEdit
+	picker     *envPicker
+	env        envs.Env
 
 	width, height int
 	dirty         bool
@@ -113,6 +116,14 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 	if len(nb.Cells) == 0 {
 		nb.Insert(0, notebook.NewCell(notebook.Code))
 	}
+	// reopen in the env picked last time with :env
+	env, ok := envs.Resolve(nb.JupytuiPython(), filepath.Dir(path))
+	var startMsg string
+	if !ok {
+		startMsg = "saved env " + nb.JupytuiPython() + " is gone, using the project env"
+		env, _ = envs.Resolve("", "")
+	}
+	opts.Cmd = kernelCmd(env)
 	m := &Model{
 		path:    path,
 		nb:      nb,
@@ -125,6 +136,8 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 		mdCache: map[string]string{},
 		eds:     map[*notebook.Cell]*editor{},
 		vimOn:   true,
+		env:     env,
+		msg:     startMsg,
 		number:  true,
 		// relative by default, like LazyVim
 		relative: true,
@@ -218,10 +231,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case envsMsg:
+		m.handleEnvs(msg)
+		return m, nil
+
 	case tea.KeyPressMsg:
 		if m.help {
 			m.help = false
 			return m, nil
+		}
+		if m.picker != nil {
+			return m, m.pickerKey(msg)
 		}
 		if m.flash != nil {
 			return m, m.flashKey(msg)

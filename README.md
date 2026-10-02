@@ -34,6 +34,16 @@ If the file doesn't exist it gets created on first save. The kernel starts in th
 
 `jupytui exec notebook.ipynb` runs every code cell headless and prints the output, mostly useful for debugging.
 
+## Python environments
+
+By default the kernel runs in your project's environment (`uv run` in the notebook's folder). `:env` lists everything else it found:
+
+- venvs (anything with a `pyvenv.cfg`) in the notebook's folder and its parents, its subfolders, `$VIRTUAL_ENV` and `~/.virtualenvs`
+- conda / mamba / micromamba envs, if you have one of them
+- Pythons uv knows about (`uv python list`)
+
+Pick one and the kernel restarts in it. `ipykernel` gets layered on by uv, so the env doesn't need it installed and nothing is written into it. The choice is saved in the notebook's metadata (`metadata.jupytui.python`, relative to the notebook when it lives in the same folder) and used next time you open it. Jupyter and VS Code ignore that key.
+
 ## Export to .py
 
 ```sh
@@ -92,6 +102,7 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `:export[!] [file.py]`   | export as a `# %%` .py              |
 | `:interrupt`             | interrupt the kernel                |
 | `:restart`               | restart the kernel                  |
+| `:env`                   | pick the Python environment         |
 | `:set nu` `:set nonu`    | line numbers on / off               |
 | `:set rnu` `:set nornu`  | relative line numbers on / off      |
 | `:set novim` `:set vim`  | plain editing in cells instead of vim |

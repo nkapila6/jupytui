@@ -28,6 +28,8 @@ func newKernelHost(opts kernel.Options) *kernelHost {
 
 // start shuts down old (if any) and starts a fresh kernel.
 func (h *kernelHost) start(old *kernel.Kernel) tea.Cmd {
+	// copied now, the env picker may change h.opts before this runs
+	opts := h.opts
 	return func() tea.Msg {
 		// a cmd can run after Close, or never; only count ones that run
 		h.mu.Lock()
@@ -45,7 +47,6 @@ func (h *kernelHost) start(old *kernel.Kernel) tea.Cmd {
 			delete(h.live, old)
 			h.mu.Unlock()
 		}
-		opts := h.opts
 		opts.Context = h.ctx
 		k, err := kernel.Start(opts)
 		if k != nil {
