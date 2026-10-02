@@ -465,10 +465,6 @@ func parseMotion(keys []string, i int) (motion, int) {
 	return motion{}, stBad
 }
 
-func isOperator(k string) bool {
-	return k == "d" || k == "c" || k == "y" || k == ">" || k == "<"
-}
-
 func (e *editor) normal(keys []string) (edResult, int) {
 	i := 0
 	n1, has1 := parseCount(keys, &i)
@@ -688,7 +684,7 @@ func countKeys(n int, has bool) []string {
 		return nil
 	}
 	var out []string
-	for _, r := range []rune(strings.TrimSpace(itoa(n))) {
+	for _, r := range itoa(n) {
 		out = append(out, string(r))
 	}
 	return out
