@@ -94,6 +94,8 @@ type Model struct {
 	help       bool
 	ext        *extEdit
 	picker     *envPicker
+	vars       *varsPanel
+	dfv        *frameView
 	comp       *compState
 	compSeq    int // latest completion request
 	compFrom   int // request the open popup was built from
@@ -300,6 +302,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleEnvs(msg)
 		return m, nil
 
+	case varsMsg:
+		m.handleVars(msg)
+		return m, nil
+
+	case reprMsg:
+		if m.vars != nil {
+			m.vars.detail = msg.text
+			if msg.err != nil {
+				m.vars.detail = msg.err.Error()
+			}
+		}
+		return m, nil
+
+	case frameMsg:
+		m.handleFrame(msg)
+		if m.dfv != nil {
+			return m, m.ensureRows()
+		}
+		return m, nil
+
 	case compMsg:
 		m.handleCompletion(msg)
 		return m, nil
@@ -349,6 +371,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.picker != nil {
 			return m, m.pickerKey(msg)
+		}
+		if m.dfv != nil {
+			return m, m.frameKey(msg)
+		}
+		if m.vars != nil {
+			return m, m.varsKey(msg)
 		}
 		if m.flash != nil {
 			return m, m.flashKey(msg)
@@ -495,6 +523,7 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 	if !e.ok {
 		return nil
 	}
+	var refresh tea.Cmd // an open variables panel reloads when runs finish
 	// keep draining channels of a kernel we restarted away from, but
 	// don't let them touch cells
 	if e.k != m.k {
@@ -514,6 +543,7 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 		c.Outputs = nil
 	case kernel.EvDone:
 		delete(m.runs, c)
+		refresh = m.refreshVarsAfterRun(e.ev)
 		if e.ev.ExecCount > 0 {
 			n := e.ev.ExecCount
 			c.ExecutionCount = &n
@@ -522,7 +552,7 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 			m.msg = firstLine(e.ev.Err.Error())
 		}
 	}
-	return waitEvent(e.k, c, e.ch)
+	return tea.Batch(waitEvent(e.k, c, e.ch), refresh)
 }
 
 func (m *Model) interrupt() tea.Cmd {

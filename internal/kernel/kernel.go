@@ -351,13 +351,57 @@ type Event struct {
 // which only fires once the reply is in and iopub went idle, so no
 // trailing outputs get lost.
 func (k *Kernel) Execute(code string) (<-chan Event, error) {
+	return k.execute(code, true)
+}
+
+// Eval runs helper code without touching history or the execution
+// count, and returns what it printed. Used for introspection (variable
+// explorer, dataframe pages); the code should print one JSON value.
+func (k *Kernel) Eval(code string, timeout time.Duration) (string, error) {
+	events, err := k.execute(code, false)
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return out.String(), nil
+			}
+			switch ev.Kind {
+			case EvOutput:
+				switch ev.Output.OutputType {
+				case "stream":
+					if ev.Output.Name == "stdout" {
+						out.WriteString(ev.Output.Text)
+					}
+				case "error":
+					return "", fmt.Errorf("%s: %s", ev.Output.Ename, ev.Output.Evalue)
+				}
+			case EvDone:
+				if ev.Err != nil {
+					return "", ev.Err
+				}
+			}
+		case <-deadline:
+			return "", errors.New("kernel took too long")
+		}
+	}
+}
+
+// execute sends an execute_request. history=false is for our own
+// helper code: no history entry and no bump of the [n] counter. (Not
+// silent=true, which would also swallow the stdout we read the answer from.)
+func (k *Kernel) execute(code string, history bool) (<-chan Event, error) {
 	m, err := k.newMessage("execute_request", map[string]any{
 		"code":             code,
 		"silent":           false,
-		"store_history":    true,
+		"store_history":    history,
 		"user_expressions": map[string]any{},
 		"allow_stdin":      false,
-		"stop_on_error":    true,
+		"stop_on_error":    history,
 	})
 	if err != nil {
 		return nil, err

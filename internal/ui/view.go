@@ -92,6 +92,20 @@ func (m *Model) View() tea.View {
 	if m.picker != nil {
 		body, cursor = m.renderPicker(), nil
 	}
+	if m.vars != nil {
+		body, cursor = m.renderVars(), nil
+	}
+	if m.dfv != nil {
+		body, cursor = m.renderFrame(), nil
+		if m.dfv.editing {
+			if c := m.dfv.input.Cursor(); c != nil {
+				cc := *c
+				cc.Y = headerH + m.bodyHeight() - 1
+				cc.X++
+				cursor = &cc
+			}
+		}
+	}
 	footer := m.renderFooter()
 	if m.mode == cmdMode {
 		footer = m.cmd.View()
@@ -711,6 +725,8 @@ var helpText = [][2]string{
 	{":export[!] [file.py]", "write a # %% percent .py"},
 	{":restart :interrupt", "kernel control"},
 	{":env", "pick the python environment"},
+	{":vars  gv", "variable explorer (enter on a table opens the viewer)"},
+	{":view <name>", "open a dataframe / array in the viewer"},
 	{":<n>", "jump to cell n"},
 	{":set [no]nu [no]rnu", "line numbers / relative numbers"},
 	{":set [no]vim", "vim editing inside cells"},

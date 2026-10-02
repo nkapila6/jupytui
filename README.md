@@ -38,6 +38,22 @@ If the file doesn't exist it gets created on first save. The kernel starts in th
 
 `jupytui exec notebook.ipynb` runs every code cell headless and prints the output, mostly useful for debugging.
 
+## Variables and data
+
+`:vars` (or `gv`) lists what's in the kernel: name, type, shape, memory and a preview. It refreshes after cells finish, and asking doesn't touch your namespace or the `[n]` counter.
+
+`enter` on a pandas or polars DataFrame/Series or a numpy array opens it full screen (`:view df` does it directly). Rows are fetched from the kernel a page at a time, sorted and filtered there, so a 10M row frame browses as fast as a small one:
+
+| key | action |
+|---|---|
+| `hjkl`, `ctrl+d` `ctrl+u`, `gg` `G`, `0` `$` | move |
+| `s` | sort by the current column (asc, desc, off) |
+| `/` | filter rows containing some text |
+| `enter` | show the full value |
+| `q` | back |
+
+`enter` on anything else shows its full repr.
+
 ## Python environments
 
 By default the kernel runs in your project's environment (`uv run` in the notebook's folder). `:env` lists everything else it found:
@@ -124,6 +140,7 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
 | `:interrupt`             | interrupt the kernel                |
 | `:restart`               | restart the kernel                  |
 | `:env`                   | pick the Python environment         |
+| `:vars` / `:view df`     | variable explorer / dataframe viewer |
 | `:set nu` `:set nonu`    | line numbers on / off               |
 | `:set rnu` `:set nornu`  | relative line numbers on / off      |
 | `:set novim` `:set vim`  | plain editing in cells instead of vim |

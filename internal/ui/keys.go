@@ -64,6 +64,8 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 			jump(0)
 		case "gx":
 			m.openImage()
+		case "gv":
+			return m.openVars()
 		}
 		return nil
 	}
@@ -365,6 +367,9 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		m.export(strings.TrimSpace(arg), cmd == "export!")
 		return nil
 	}
+	if name, ok := strings.CutPrefix(line, "view "); ok {
+		return m.openFrame(strings.TrimSpace(name))
+	}
 	if opt, ok := strings.CutPrefix(line, "set "); ok {
 		opt = strings.TrimSpace(opt)
 		if v, ok := strings.CutPrefix(opt, "images="); ok {
@@ -390,6 +395,8 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.restart()
 	case "env":
 		return m.openEnvPicker()
+	case "vars":
+		return m.openVars()
 	case "runall", "ra":
 		return m.runAll()
 	case "clear":
