@@ -9,11 +9,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"syscall"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/nkapila6/jupytui/internal/kernel"
 	"github.com/nkapila6/jupytui/internal/notebook"
+	"github.com/nkapila6/jupytui/internal/session"
 	"github.com/nkapila6/jupytui/internal/ui"
 )
 
@@ -21,6 +24,7 @@ const usage = `usage: jupytui <notebook.ipynb>        open (or create) a noteboo
        jupytui exec <notebook.ipynb>   run all cells headless and print outputs
        jupytui export [-f] [-o out.py] <notebook.ipynb>
                                        write a percent-format .py (# %% cells)
+       jupytui sessions [kill <n>]           list (or stop) detached kernels
        jupytui --version`
 
 // set by the Makefile; go install builds fall back to the module version
@@ -47,6 +51,11 @@ func main() {
 		err = execAll(args[1])
 	case len(args) >= 2 && args[0] == "export":
 		err = export(args[1:])
+	case len(args) == 2 && args[0] == "keep":
+		// started by :detach, not meant to be run by hand
+		err = session.RunKeeper(args[1])
+	case len(args) >= 1 && args[0] == "sessions":
+		err = sessions(args[1:])
 	case len(args) == 1 && args[0] != "-h" && args[0] != "--help":
 		err = runTUI(args[0])
 	default:
@@ -64,6 +73,20 @@ func runTUI(path string) error {
 	if err != nil {
 		return err
 	}
+	// a kernel left running with :detach: take it back before loading,
+	// since the keeper writes the latest outputs into the file on handover
+	var attach *ui.Attach
+	if s, ok := session.Load(abs); ok {
+		if err := session.TakeOwnership(s, os.Getpid()); err != nil {
+			return err
+		}
+		running, err := session.Release(s)
+		if err != nil {
+			return fmt.Errorf("reattaching: %w", err)
+		}
+		attach = &ui.Attach{Session: s, Running: running}
+	}
+
 	nb, err := notebook.Load(abs)
 	if errors.Is(err, fs.ErrNotExist) {
 		nb, err = notebook.New(), nil
@@ -72,7 +95,7 @@ func runTUI(path string) error {
 		return err
 	}
 
-	m := ui.New(abs, nb, kernel.Options{Dir: filepath.Dir(abs)})
+	m := ui.New(abs, nb, kernel.Options{Dir: filepath.Dir(abs)}, attach)
 	p := tea.NewProgram(m)
 
 	// terminal closed or we got killed politely: still clean up the kernel
@@ -85,7 +108,35 @@ func runTUI(path string) error {
 
 	_, err = p.Run()
 	m.Close()
+	if err == nil && m.Detached() {
+		fmt.Printf("kernel still running in the background. reopen with: jupytui %s\n", path)
+	}
 	return err
+}
+
+func sessions(args []string) error {
+	list := session.List()
+	if len(args) >= 2 && args[0] == "kill" {
+		n, err := strconv.Atoi(args[1])
+		if err != nil || n < 1 || n > len(list) {
+			return fmt.Errorf("no session %q, see: jupytui sessions", args[1])
+		}
+		session.Kill(list[n-1])
+		fmt.Println("stopped", list[n-1].Notebook)
+		return nil
+	}
+	if len(list) == 0 {
+		fmt.Println("no detached kernels")
+		return nil
+	}
+	for i, s := range list {
+		state := "idle"
+		if len(s.Running) > 0 {
+			state = fmt.Sprintf("%d cells running at detach", len(s.Running))
+		}
+		fmt.Printf("%d  %s  (%s, %s, detached %s ago)\n", i+1, s.Notebook, s.Env, state, time.Since(s.Started).Round(time.Second))
+	}
+	return nil
 }
 
 func export(args []string) error {

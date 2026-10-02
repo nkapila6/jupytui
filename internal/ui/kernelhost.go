@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/nkapila6/jupytui/internal/kernel"
+	"github.com/nkapila6/jupytui/internal/session"
 )
 
 // kernelHost owns every kernel the UI starts so Close can shut them all
@@ -56,6 +57,35 @@ func (h *kernelHost) start(old *kernel.Kernel) tea.Cmd {
 		}
 		return KernelMsg{Kernel: k, Err: err}
 	}
+}
+
+// attach connects to a kernel from a detached session instead of
+// starting one.
+func (h *kernelHost) attach(s *session.Session) tea.Cmd {
+	return func() tea.Msg {
+		h.mu.Lock()
+		if h.closed {
+			h.mu.Unlock()
+			return nil
+		}
+		h.wg.Add(1)
+		h.mu.Unlock()
+		defer h.wg.Done()
+		k, err := kernel.Attach(h.ctx, s.ConnFile, s.PID)
+		if k != nil {
+			h.mu.Lock()
+			h.live[k] = true
+			h.mu.Unlock()
+		}
+		return KernelMsg{Kernel: k, Err: err}
+	}
+}
+
+// forget drops a kernel from cleanup, for one handed to a keeper.
+func (h *kernelHost) forget(k *kernel.Kernel) {
+	h.mu.Lock()
+	delete(h.live, k)
+	h.mu.Unlock()
 }
 
 func (h *kernelHost) Close() {

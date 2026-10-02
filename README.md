@@ -47,6 +47,15 @@ jupytui keeps track of which cells depend on which (it asks the kernel to parse 
 
 `:runstale` reruns all of them, top to bottom. `:set reactive` goes further, like [marimo](https://marimo.io): run a cell and everything downstream of it reruns on its own. Cells that only depend on an *edited* cell wait until you run that one. The footer counts what's stale.
 
+## Detach and reattach
+
+`:detach` quits jupytui but leaves the kernel running, like detaching from tmux. Cells that are still running keep going, and a small background process writes their output into the notebook as it comes. Open the notebook again and you're back on the same kernel, variables and all, with running cells still streaming. Handy for long training runs or closing the nvim float.
+
+```sh
+jupytui sessions          # what's running in the background
+jupytui sessions kill 1   # stop one
+```
+
 ## Variables and data
 
 `:vars` (or `gv`) lists what's in the kernel: name, type, shape, memory and a preview. It refreshes after cells finish, and asking doesn't touch your namespace or the `[n]` counter.
@@ -146,6 +155,7 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
 | `:runall`                | run every code cell                 |
 | `:runstale`              | rerun stale and edited cells        |
 | `:set reactive`          | rerun dependents automatically      |
+| `:detach`                | quit, keep the kernel running       |
 | `:clear`                 | clear all outputs                   |
 | `:export[!] [file.py]`   | export as a `# %%` .py              |
 | `:interrupt`             | interrupt the kernel                |

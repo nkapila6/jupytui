@@ -742,6 +742,7 @@ var helpText = [][2]string{
 	{":restart :interrupt", "kernel control"},
 	{":env", "pick the python environment"},
 	{":vars  gv", "variable explorer (enter on a table opens the viewer)"},
+	{":detach", "quit but keep the kernel (and running cells) going"},
 	{":view <name>", "open a dataframe / array in the viewer"},
 	{":<n>", "jump to cell n"},
 	{":set [no]nu [no]rnu", "line numbers / relative numbers"},

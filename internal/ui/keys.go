@@ -395,6 +395,8 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return m.restart()
 	case "env":
 		return m.openEnvPicker()
+	case "detach":
+		return m.detach()
 	case "vars":
 		return m.openVars()
 	case "runall", "ra":

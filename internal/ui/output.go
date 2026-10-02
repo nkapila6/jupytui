@@ -115,51 +115,11 @@ var objectRepr = regexp.MustCompile(`^<[\w.]+ object( at 0x[0-9a-f]+)?>$`)
 
 // termText is stream text as a terminal would show it.
 func termText(s string) string {
-	return strings.ReplaceAll(collapseCR(s), "\r", "")
-}
-
-// collapseCR drops text that a carriage return has overwritten, so a
-// tqdm bar keeps only its latest frame (JupyterLab does the same). A
-// trailing \r is kept since the next chunk is meant to overwrite.
-func collapseCR(s string) string {
-	if !strings.Contains(s, "\r") {
-		return s
-	}
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		trail := strings.HasSuffix(l, "\r")
-		l = strings.TrimSuffix(l, "\r")
-		if j := strings.LastIndex(l, "\r"); j >= 0 {
-			l = l[j+1:]
-		}
-		if trail {
-			l += "\r"
-		}
-		lines[i] = l
-	}
-	return strings.Join(lines, "\n")
+	return strings.ReplaceAll(notebook.CollapseCR(s), "\r", "")
 }
 
 func expandTabs(s string) string {
 	return strings.ReplaceAll(s, "\t", "    ")
-}
-
-// mergeStream appends to the previous output when it's the same stream,
-// like Jupyter does, so \r redraws work across chunks.
-func mergeStream(outs []*notebook.Output, o *notebook.Output) []*notebook.Output {
-	if o.OutputType != "stream" {
-		return append(outs, o)
-	}
-	if len(outs) > 0 {
-		last := outs[len(outs)-1]
-		if last.OutputType == "stream" && last.Name == o.Name {
-			last.Text = collapseCR(last.Text + o.Text)
-			return outs
-		}
-	}
-	o.Text = collapseCR(o.Text)
-	return append(outs, o)
 }
 
 func padRight(s string, w int) string {

@@ -94,6 +94,10 @@ type Model struct {
 	help       bool
 	ext        *extEdit
 	picker     *envPicker
+	msgIDs     map[*notebook.Cell]string // request id of each cell's latest run
+	attach     *Attach                   // reattaching to a detached session
+	detached   bool
+	remote     *remoteInfo
 	vars       *varsPanel
 
 	// stale tracking (stale.go)
@@ -160,7 +164,7 @@ type Model struct {
 	mdrW       int
 }
 
-func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
+func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach) *Model {
 	if len(nb.Cells) == 0 {
 		nb.Insert(0, notebook.NewCell(notebook.Code))
 	}
@@ -201,6 +205,8 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 	m.anonIDs = map[*notebook.Cell]string{}
 	m.ran = map[*notebook.Cell]runInfo{}
 	m.execSrc = map[*notebook.Cell]string{}
+	m.msgIDs = map[*notebook.Cell]string{}
+	m.attach = attach
 	m.sixelCache = map[string]string{}
 	m.cmd = textinput.New()
 	m.cmd.Prompt = ":"
@@ -226,7 +232,11 @@ func (m *Model) Close() {
 }
 
 func (m *Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.host.start(nil)}
+	start := m.host.start(nil)
+	if m.attach != nil {
+		start = m.host.attach(m.attach.Session)
+	}
+	cmds := []tea.Cmd{tea.RequestBackgroundColor, start}
 	if m.gfxMode == gfxSixel {
 		cmds = append(cmds, sixelTick())
 	}
@@ -257,6 +267,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.k = msg.Kernel
 		m.kstate = "idle"
 		cmds := []tea.Cmd{m.waitStatus(), m.depsCmd()}
+		if m.attach != nil {
+			cmds = append(cmds, m.adopt(msg.Kernel))
+		}
 		for _, c := range m.pending {
 			cmds = append(cmds, m.submit(c))
 		}
@@ -317,6 +330,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case envsMsg:
 		m.handleEnvs(msg)
 		return m, nil
+
+	case detachedMsg:
+		return m, m.handleDetached(msg)
 
 	case depsMsg:
 		return m, m.handleDeps(msg)
@@ -537,7 +553,8 @@ func (m *Model) execute(c *notebook.Cell) tea.Cmd {
 }
 
 func (m *Model) submit(c *notebook.Cell) tea.Cmd {
-	ch, err := m.k.Execute(c.Source)
+	id, ch, err := m.k.ExecuteID(c.Source)
+	m.msgIDs[c] = id
 	if err != nil {
 		delete(m.runs, c)
 		m.msg = "execute failed: " + err.Error()
@@ -563,7 +580,7 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 		n := e.ev.ExecCount
 		c.ExecutionCount = &n
 	case kernel.EvOutput:
-		c.Outputs = mergeStream(c.Outputs, e.ev.Output)
+		c.AddOutput(e.ev.Output)
 		m.dirty = true
 		return tea.Batch(waitEvent(e.k, c, e.ch), m.syncKitty())
 	case kernel.EvClear:

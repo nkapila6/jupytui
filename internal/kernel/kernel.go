@@ -32,14 +32,23 @@ func CmdForPython(python string) []string {
 	return []string{"uv", "run", "--no-project", "--python", python, "--with", "ipykernel", "python", "-c", bootstrap, "-f", "{connection_file}"}
 }
 
-// bootstrap starts ipykernel with a watchdog on jupytui's pid. ipykernel's
+// bootstrap starts ipykernel with a watchdog on its owner. ipykernel's
 // own parent poller only watches its direct parent, which is uv, and uv
 // happily outlives us if we get SIGKILLed or the terminal goes away.
+// The owner's pid lives in a file next to the connection file so a
+// detached session can hand the kernel to a keeper process and back.
 const bootstrap = `import os, shutil, sys, threading, time
-def _watch(pid=int(os.environ.get("JUPYTUI_PID", "0"))):
+def _watch():
     conn_dir = os.path.dirname(sys.argv[sys.argv.index("-f") + 1])
-    while pid:
+    pidfile = os.environ.get("JUPYTUI_PIDFILE", "")
+    while True:
         time.sleep(1)
+        try:
+            pid = int(open(pidfile).read().strip())
+        except Exception:
+            pid = int(os.environ.get("JUPYTUI_PID", "0"))
+        if not pid:
+            continue
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
@@ -62,8 +71,9 @@ type Kernel struct {
 	connFile string
 	key      []byte
 	session  string
-	cmd      *exec.Cmd
-	logs     *tailBuffer
+	cmd      *exec.Cmd // nil when we attached to someone else's kernel
+	pid      int       // process group leader (uv), for signals
+	released bool      // handed to another owner: don't delete its files
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -116,12 +126,24 @@ func Start(opts Options) (*Kernel, error) {
 	for i, a := range opts.Cmd {
 		args[i] = strings.ReplaceAll(a, "{connection_file}", connFile)
 	}
+	dir := filepath.Dir(connFile)
+	if err := writeOwner(dir, os.Getpid()); err != nil {
+		return nil, err
+	}
+	// a file, not a pipe: the kernel may outlive us (detach), and writing
+	// to a pipe nobody reads anymore would break it
+	logf, err := os.Create(filepath.Join(dir, "kernel.log"))
+	if err != nil {
+		return nil, err
+	}
+	defer logf.Close()
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = opts.Dir
-	cmd.Env = append(os.Environ(), fmt.Sprintf("JUPYTUI_PID=%d", os.Getpid()))
-	logs := &tailBuffer{max: 16 << 10}
-	cmd.Stdout = logs
-	cmd.Stderr = logs
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("JUPYTUI_PID=%d", os.Getpid()),
+		"JUPYTUI_PIDFILE="+filepath.Join(dir, "owner.pid"))
+	cmd.Stdout = logf
+	cmd.Stderr = logf
 	// own process group: keeps terminal signals away from the kernel and
 	// lets us kill uv and python together
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -137,7 +159,7 @@ func Start(opts Options) (*Kernel, error) {
 		key:      []byte(conn.Key),
 		session:  newUUID(),
 		cmd:      cmd,
-		logs:     logs,
+		pid:      cmd.Process.Pid,
 		ctx:      ctx,
 		cancel:   cancel,
 		replies:  map[string]chan *Message{},
@@ -158,6 +180,14 @@ func Start(opts Options) (*Kernel, error) {
 }
 
 func (k *Kernel) connect(ctx context.Context, timeout time.Duration) error {
+	return k.connectWith(ctx, timeout, false)
+}
+
+// connectWith dials the kernel. attaching=true is for a kernel that may
+// be busy running someone else's cell: shell requests queue behind that
+// cell, so the handshake goes over control (answered right away) and the
+// iopub subscription just gets a moment to settle.
+func (k *Kernel) connectWith(ctx context.Context, timeout time.Duration, attaching bool) error {
 	deadline := time.Now().Add(timeout)
 	// wait until the kernel has bound its ports
 	for {
@@ -195,6 +225,19 @@ func (k *Kernel) connect(ctx context.Context, timeout time.Duration) error {
 	go k.replyLoop(k.shell.s)
 	go k.replyLoop(k.control.s)
 	go k.iopubLoop()
+
+	if attaching {
+		m, err := k.newMessage("kernel_info_request", struct{}{})
+		if err != nil {
+			return err
+		}
+		if _, err := k.request(k.control, m, time.Until(deadline)); err != nil {
+			return k.deathError("kernel didn't answer")
+		}
+		// zmq's slow-joiner: give the SUB subscription time to reach the kernel
+		time.Sleep(300 * time.Millisecond)
+		return nil
+	}
 
 	// SUB sockets drop anything published before the subscription is live,
 	// so keep pinging until a kernel_info shows up on iopub too
@@ -351,6 +394,13 @@ type Event struct {
 // which only fires once the reply is in and iopub went idle, so no
 // trailing outputs get lost.
 func (k *Kernel) Execute(code string) (<-chan Event, error) {
+	_, ch, err := k.execute(code, true)
+	return ch, err
+}
+
+// ExecuteID is Execute plus the request's msg_id, which a detached
+// session needs to keep following the run.
+func (k *Kernel) ExecuteID(code string) (string, <-chan Event, error) {
 	return k.execute(code, true)
 }
 
@@ -358,7 +408,7 @@ func (k *Kernel) Execute(code string) (<-chan Event, error) {
 // count, and returns what it printed. Used for introspection (variable
 // explorer, dataframe pages); the code should print one JSON value.
 func (k *Kernel) Eval(code string, timeout time.Duration) (string, error) {
-	events, err := k.execute(code, false)
+	_, events, err := k.execute(code, false)
 	if err != nil {
 		return "", err
 	}
@@ -394,7 +444,7 @@ func (k *Kernel) Eval(code string, timeout time.Duration) (string, error) {
 // execute sends an execute_request. history=false is for our own
 // helper code: no history entry and no bump of the [n] counter. (Not
 // silent=true, which would also swallow the stdout we read the answer from.)
-func (k *Kernel) execute(code string, history bool) (<-chan Event, error) {
+func (k *Kernel) execute(code string, history bool) (string, <-chan Event, error) {
 	m, err := k.newMessage("execute_request", map[string]any{
 		"code":             code,
 		"silent":           false,
@@ -404,14 +454,14 @@ func (k *Kernel) execute(code string, history bool) (<-chan Event, error) {
 		"stop_on_error":    history,
 	})
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	id := m.Header.MsgID
 	iopub := k.watch(id)
 	reply, err := k.send(k.shell, m)
 	if err != nil {
 		k.unwatch(id)
-		return nil, err
+		return "", nil, err
 	}
 
 	events := make(chan Event, 64)
@@ -463,7 +513,7 @@ func (k *Kernel) execute(code string, history bool) (<-chan Event, error) {
 		}
 		events <- done
 	}()
-	return events, nil
+	return id, events, nil
 }
 
 // Interrupt asks the kernel to interrupt over the control channel, and
@@ -476,7 +526,7 @@ func (k *Kernel) Interrupt() error {
 	if _, err := k.request(k.control, m, 2*time.Second); err == nil {
 		return nil
 	}
-	return syscall.Kill(-k.cmd.Process.Pid, syscall.SIGINT)
+	return syscall.Kill(-k.pid, syscall.SIGINT)
 }
 
 // Shutdown asks nicely, then kills the whole process group.
@@ -497,7 +547,7 @@ func (k *Kernel) Shutdown() error {
 	select {
 	case <-k.dead:
 	case <-time.After(grace):
-		syscall.Kill(-k.cmd.Process.Pid, syscall.SIGKILL)
+		syscall.Kill(-k.pid, syscall.SIGKILL)
 		<-k.dead
 	}
 	return nil
@@ -517,7 +567,9 @@ func (k *Kernel) stop() {
 				s.s.Close()
 			}
 		}
-		os.RemoveAll(filepath.Dir(k.connFile))
+		if !k.released {
+			os.RemoveAll(filepath.Dir(k.connFile))
+		}
 		close(k.dead)
 		select {
 		case k.status <- "dead":
@@ -533,35 +585,21 @@ func (k *Kernel) Status() <-chan string { return k.status }
 func (k *Kernel) Dead() <-chan struct{} { return k.dead }
 
 // Logs is the tail of the kernel process's stdout/stderr.
-func (k *Kernel) Logs() string { return k.logs.String() }
+func (k *Kernel) Logs() string {
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(k.connFile), "kernel.log"))
+	if err != nil {
+		return ""
+	}
+	if len(b) > 16<<10 {
+		b = b[len(b)-16<<10:]
+	}
+	return string(b)
+}
 
 func (k *Kernel) deathError(msg string) error {
-	logs := strings.TrimSpace(k.logs.String())
+	logs := strings.TrimSpace(k.Logs())
 	if logs == "" {
 		return errors.New(msg)
 	}
 	return fmt.Errorf("%s:\n%s", msg, logs)
-}
-
-// tailBuffer keeps the last max bytes written to it.
-type tailBuffer struct {
-	mu  sync.Mutex
-	buf []byte
-	max int
-}
-
-func (t *tailBuffer) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.buf = append(t.buf, p...)
-	if over := len(t.buf) - t.max; over > 0 {
-		t.buf = t.buf[over:]
-	}
-	return len(p), nil
-}
-
-func (t *tailBuffer) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return string(t.buf)
 }
