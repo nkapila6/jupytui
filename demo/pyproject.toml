@@ -1,0 +1,6 @@
+[project]
+name = "jupytui-demo"
+version = "0"
+description = "Python env for the README recordings"
+requires-python = ">=3.11"
+dependencies = ["pandas", "polars", "numpy", "matplotlib", "tqdm"]

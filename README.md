@@ -4,6 +4,8 @@ A small terminal UI for Jupyter notebooks. Open an `.ipynb`, run cells, see outp
 
 Built with Go and the [Charm](https://charm.sh) stack. Ships as a single static binary.
 
+![running a notebook: progress bar, DataFrame table and an inline plot](demo/tour.gif)
+
 ## How it works
 
 jupytui starts an `ipykernel` in your project with `uv` and talks to it directly over ZMQ (pure Go, no cgo). Your project's `.venv` packages are available in the kernel, and `ipykernel` itself is pulled in on the fly, so you don't need to add it to your project.
@@ -43,6 +45,8 @@ By default the kernel runs in your project's environment (`uv run` in the notebo
 - Pythons uv knows about (`uv python list`)
 
 Pick one and the kernel restarts in it. `ipykernel` gets layered on by uv, so the env doesn't need it installed and nothing is written into it. The choice is saved in the notebook's metadata (`metadata.jupytui.python`, relative to the notebook when it lives in the same folder) and used next time you open it. Jupyter and VS Code ignore that key.
+
+![picking a Python environment and exporting to a percent .py](demo/env-export.gif)
 
 ## Export to .py
 
@@ -85,11 +89,15 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `ctrl+s`                 | save                                         |
 | `q`                      | quit (asks again if there are unsaved changes) |
 
+![vim editing, relative line numbers across cells and flash jumps](demo/vim.gif)
+
 **Inside a cell** it's vim: motions (`hjkl w b e W B E 0 ^ $ gg G f t F T ; , % { }`), operators with motions and counts (`d c y > <`, `dd cc yy >> <<`, `3dw`, `d2j`), text objects (`iw aw i" a" i( a( i[ i{ ...`), `x X s S D C Y p P J ~ r`, `u` / `ctrl+r` undo/redo, `.` repeat, visual `v` / `V`. Enter after a `:` indents in Python.
 
 `esc` goes insert to normal, and normal back out to the notebook. `ctrl+enter` runs the cell, `shift+enter` runs and moves on, `ctrl+e` opens it in nvim.
 
 **Completions** pop up in insert mode after `.` or a couple of letters (or on `tab` / `ctrl+space`). They come from two places: the running kernel, which knows what's actually in memory (`df.` lists your real columns), and [basedpyright](https://github.com/DetachHead/basedpyright), which knows code that hasn't run yet. Kernel results come first. `ctrl+n` / `ctrl+p` (or `tab`, arrows) to move, `enter` to accept, `esc` to close the menu. `tab` still indents when there's nothing to complete.
+
+![kernel and LSP completions, signature help, diagnostics, hover and go to definition](demo/completions.gif)
 
 **LSP**: basedpyright starts the first time you open a code cell, via `uvx` (first run downloads it once; nothing goes into your project, and you don't need node). It sees all code cells as one file and uses the same Python env as the kernel. You get:
 
@@ -145,6 +153,10 @@ Open a notebook buffer, hit `<leader>jn`, and jupytui comes up in a float.
 Pressing `e` on a cell (or `ctrl+e` inside one) while in nvim opens it in your actual nvim, not a nested one: the cell lands in a new tab as a `.py` file so your LSP, treesitter and keymaps all work. Every `:w` syncs straight back into the notebook, and `:wq` drops you back in the jupytui float. This works because nvim sets `$NVIM` for its terminals.
 
 Outside nvim, `e` opens `$VISUAL` / `$EDITOR` (falling back to `vi`) full screen.
+
+## Recordings
+
+The GIFs are made with [VHS](https://github.com/charmbracelet/vhs) from the tapes in `demo/`. `make demos` re-records them (needs `vhs` and `uv`; the demo notebook has its own uv project in `demo/`).
 
 ## Status
 

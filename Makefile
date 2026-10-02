@@ -4,7 +4,7 @@ TARGETS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64
 
 export CGO_ENABLED=0
 
-.PHONY: build install test dist clean
+.PHONY: build install test dist clean demos
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o jupytui ./cmd/jupytui
@@ -28,6 +28,10 @@ dist: clean
 		tar -C dist -czf dist/$$name.tar.gz $$name && rm -r dist/$$name; \
 	done
 	@cd dist && shasum -a 256 *.tar.gz > checksums.txt
+
+# re-record the README GIFs (needs vhs and uv)
+demos:
+	for t in demo/*.tape; do vhs $$t; done
 
 clean:
 	rm -rf dist jupytui

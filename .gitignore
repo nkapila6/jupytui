@@ -2,3 +2,6 @@
 /dist/
 *.test
 *.got.ipynb
+/demo/.venv/
+/demo/scratch*
+.DS_Store
