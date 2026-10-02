@@ -262,6 +262,7 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 	compCmd := m.afterInsertKey(tok)
 	if e.mode != vInsert {
 		m.sig = nil
+		m.releaseDiags()
 	} else {
 		switch tok {
 		case "(", ",":

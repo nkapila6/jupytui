@@ -111,6 +111,7 @@ type Model struct {
 	sig       *lsp.Signature
 	sigSeq    int
 	bracket   string // first key of ]d / [d
+	heldDiags *lsp.Notification
 	env       envs.Env
 
 	width, height int
@@ -407,6 +408,7 @@ func (m *Model) stopEdit() {
 	m.comp = nil
 	m.sig = nil
 	m.mode = normalMode
+	m.releaseDiags()
 }
 
 func (m *Model) runAndAdvance() tea.Cmd {

@@ -248,6 +248,13 @@ func (m *Model) handleDiagnostics(n lsp.Notification) {
 	if n.URI != m.docURI() {
 		return
 	}
+	// like nvim's update_in_insert=false: half-typed code is always
+	// "wrong", so hold new diagnostics until insert mode ends
+	if m.mode == editMode && m.ed != nil && m.ed.mode == vInsert {
+		m.heldDiags = &n
+		return
+	}
+	m.heldDiags = nil
 	m.diags = map[*notebook.Cell][]cellDiag{}
 	for _, d := range n.Diags {
 		// errors and warnings only; hints are mostly "unused" noise
@@ -271,6 +278,13 @@ func (m *Model) handleDiagnostics(n lsp.Notification) {
 			cd.endCol = runeCol([]rune(lines[endRow]), d.Range.End.Character)
 		}
 		m.diags[c] = append(m.diags[c], cd)
+	}
+}
+
+// releaseDiags applies diagnostics held back during insert mode.
+func (m *Model) releaseDiags() {
+	if n := m.heldDiags; n != nil && (m.ed == nil || m.ed.mode != vInsert) {
+		m.handleDiagnostics(*n)
 	}
 }
 
