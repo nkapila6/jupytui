@@ -38,6 +38,15 @@ If the file doesn't exist it gets created on first save. The kernel starts in th
 
 `jupytui exec notebook.ipynb` runs every code cell headless and prints the output, mostly useful for debugging.
 
+## Stale cells
+
+jupytui keeps track of which cells depend on which (it asks the kernel to parse each cell with Python's `ast`, so it knows exactly which names a cell defines and uses). In the prompt column:
+
+- `~[3]`: you edited this cell since it ran
+- `![4]`: something it depends on changed or ran again since it ran
+
+`:runstale` reruns all of them, top to bottom. `:set reactive` goes further, like [marimo](https://marimo.io): run a cell and everything downstream of it reruns on its own. Cells that only depend on an *edited* cell wait until you run that one. The footer counts what's stale.
+
 ## Variables and data
 
 `:vars` (or `gv`) lists what's in the kernel: name, type, shape, memory and a preview. It refreshes after cells finish, and asking doesn't touch your namespace or the `[n]` counter.
@@ -135,6 +144,8 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
 | `:w` `:q` `:q!` `:wq`    | the usual                           |
 | `:42`                    | go to notebook line 42              |
 | `:runall`                | run every code cell                 |
+| `:runstale`              | rerun stale and edited cells        |
+| `:set reactive`          | rerun dependents automatically      |
 | `:clear`                 | clear all outputs                   |
 | `:export[!] [file.py]`   | export as a `# %%` .py              |
 | `:interrupt`             | interrupt the kernel                |
