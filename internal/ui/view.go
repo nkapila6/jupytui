@@ -76,7 +76,19 @@ func (m *Model) View() tea.View {
 		return tea.NewView("")
 	}
 	body, cursor := m.renderBody()
-	v := tea.NewView(m.renderHeader() + "\n" + body + "\n" + m.renderFooter())
+	if m.help {
+		body, cursor = m.renderHelp(), nil
+	}
+	footer := m.renderFooter()
+	if m.mode == cmdMode {
+		footer = m.cmd.View()
+		if c := m.cmd.Cursor(); c != nil {
+			cc := *c
+			cc.Y = m.height - 1
+			cursor = &cc
+		}
+	}
+	v := tea.NewView(m.renderHeader() + "\n" + body + "\n" + footer)
 	v.AltScreen = true
 	v.WindowTitle = "jupytui - " + filepath.Base(m.path)
 	v.Cursor = cursor
@@ -114,9 +126,9 @@ func (m *Model) renderFooter() string {
 	text := m.msg
 	if text == "" {
 		if m.mode == editMode {
-			text = "esc normal · ctrl+r run · ctrl+s save"
+			text = "esc normal · ctrl+r run · ctrl+e $EDITOR · ctrl+s save"
 		} else {
-			text = "enter edit · ctrl+r run · j/k move · ctrl+s save · q quit"
+			text = "enter edit · ctrl+r run · : commands · ? help"
 		}
 	}
 	pos := fmt.Sprintf(" %d/%d ", m.sel+1, len(m.nb.Cells))
@@ -356,4 +368,40 @@ func (m *Model) markdown(src string, width int) string {
 	s := strings.Join(lines, "\n")
 	m.mdCache[key] = s
 	return s
+}
+
+var helpText = [][2]string{
+	{"j k / arrows", "move between cells"},
+	{"gg G", "first / last cell"},
+	{"ctrl+d ctrl+u", "scroll half a page"},
+	{"enter i / A", "edit cell (cursor at start / end)"},
+	{"e  (ctrl+e in edit)", "edit cell in $EDITOR or host nvim"},
+	{"esc", "back to normal mode"},
+	{"ctrl+r shift+enter", "run cell, move to next"},
+	{"ctrl+c", "interrupt (or quit when idle)"},
+	{"o O", "new cell below / above"},
+	{"dd u", "delete cell / undo delete"},
+	{"yy p P", "yank / paste below / paste above"},
+	{"J K", "move cell down / up"},
+	{"M C R", "make markdown / code / raw"},
+	{"x", "clear cell output"},
+	{"ctrl+s :w", "save"},
+	{"q :q :q! :wq", "quit"},
+	{":runall :clear", "run all / clear all outputs"},
+	{":restart :interrupt", "kernel control"},
+	{":<n>", "jump to cell n"},
+}
+
+func (m *Model) renderHelp() string {
+	var b strings.Builder
+	for _, h := range helpText {
+		b.WriteString(m.st.accent.Render(padRight(h[0], 22)) + m.st.dim.Render(h[1]) + "\n")
+	}
+	b.WriteString("\n" + m.st.dim.Render("press any key"))
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.st.accent.GetForeground()).
+		Padding(1, 2).
+		Render(b.String())
+	return lipgloss.Place(max(m.width, minWidth), m.bodyHeight(), lipgloss.Center, lipgloss.Center, box)
 }

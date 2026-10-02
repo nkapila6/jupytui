@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -19,6 +20,7 @@ type mode int
 const (
 	normalMode mode = iota
 	editMode
+	cmdMode
 )
 
 type runState int
@@ -28,38 +30,56 @@ const (
 	running
 )
 
-// KernelMsg delivers the result of starting the kernel, which happens
-// outside the program so the UI is up immediately.
+// KernelMsg delivers the result of starting a kernel.
 type KernelMsg struct {
 	Kernel *kernel.Kernel
 	Err    error
 }
 
-type statusMsg string
+type statusMsg struct {
+	k     *kernel.Kernel
+	state string
+}
 
 type eventMsg struct {
+	k    *kernel.Kernel
 	cell *notebook.Cell
 	ch   <-chan kernel.Event
 	ev   kernel.Event
 	ok   bool
 }
 
+type interruptMsg struct{ err error }
+
 type tickMsg struct{}
+
+type deleted struct {
+	idx  int
+	cell *notebook.Cell
+}
 
 type Model struct {
 	path string
 	nb   *notebook.Notebook
 	lang string
 
+	host   *kernelHost
 	k      *kernel.Kernel
 	kstate string
 
 	sel    int
 	mode   mode
 	ta     textarea.Model
+	cmd    textinput.Model
 	offset int
 	// set by ctrl+d/u so the view stops snapping to the selection
 	manualScroll bool
+
+	pendingKey string // first key of dd, yy, gg
+	yank       *notebook.Cell
+	undo       []deleted
+	help       bool
+	ext        *extEdit
 
 	width, height int
 	dirty         bool
@@ -80,7 +100,7 @@ type Model struct {
 	mdrW    int
 }
 
-func New(path string, nb *notebook.Notebook) *Model {
+func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 	if len(nb.Cells) == 0 {
 		nb.Insert(0, notebook.NewCell(notebook.Code))
 	}
@@ -88,6 +108,7 @@ func New(path string, nb *notebook.Notebook) *Model {
 		path:    path,
 		nb:      nb,
 		lang:    nb.Language(),
+		host:    newKernelHost(opts),
 		kstate:  "starting",
 		runs:    map[*notebook.Cell]runState{},
 		dark:    true,
@@ -100,12 +121,21 @@ func New(path string, nb *notebook.Notebook) *Model {
 	m.ta.CharLimit = 0
 	m.ta.MaxHeight = 0
 	m.ta.SetVirtualCursor(false)
+	m.cmd = textinput.New()
+	m.cmd.Prompt = ":"
+	m.cmd.SetVirtualCursor(false)
 	m.applyTheme()
 	return m
 }
 
+// Close shuts down kernels and cleans temp files. Call after Run returns.
+func (m *Model) Close() {
+	m.host.Close()
+	m.ext.cleanup()
+}
+
 func (m *Model) Init() tea.Cmd {
-	return tea.RequestBackgroundColor
+	return tea.Batch(tea.RequestBackgroundColor, m.host.start(nil))
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -113,6 +143,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.sizeEditor()
+		m.cmd.SetWidth(max(m.width-4, 10))
 		return m, nil
 
 	case tea.BackgroundColorMsg:
@@ -125,9 +156,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.kstate = "error"
 			m.msg = "kernel failed: " + firstLine(msg.Err.Error())
 			m.pending = nil
-			for c := range m.runs {
-				delete(m.runs, c)
-			}
+			m.runs = map[*notebook.Cell]runState{}
 			return m, nil
 		}
 		m.k = msg.Kernel
@@ -140,15 +169,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case statusMsg:
-		m.kstate = string(msg)
-		if msg == "dead" {
-			m.msg = "kernel died"
+		if msg.k != m.k {
+			return m, nil
+		}
+		m.kstate = msg.state
+		if msg.state == "dead" {
+			m.msg = "kernel died, :restart to start a new one"
 			return m, nil
 		}
 		return m, m.waitStatus()
 
 	case eventMsg:
 		return m, m.handleEvent(msg)
+
+	case interruptMsg:
+		if msg.err != nil {
+			m.msg = "interrupt failed: " + msg.err.Error()
+		}
+		return m, nil
 
 	case tickMsg:
 		m.frame++
@@ -158,88 +196,41 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tick()
 
+	case editorDoneMsg, editorPollMsg:
+		return m, m.handleEditor(msg)
+
 	case tea.KeyPressMsg:
-		if m.mode == editMode {
+		if m.help {
+			m.help = false
+			return m, nil
+		}
+		switch m.mode {
+		case editMode:
 			return m, m.editKey(msg)
+		case cmdMode:
+			return m, m.cmdKey(msg)
 		}
 		return m, m.normalKey(msg)
 	}
 
-	if m.mode == editMode {
-		var cmd tea.Cmd
-		m.ta, cmd = m.ta.Update(msg)
-		return m, cmd
-	}
-	return m, nil
-}
-
-func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
-	key := msg.String()
-	if key != "q" && key != "ctrl+c" {
-		m.quitArmed = false
-	}
-	m.msg = ""
-	m.manualScroll = false
-	switch key {
-	case "j", "down":
-		m.sel = min(m.sel+1, len(m.nb.Cells)-1)
-	case "k", "up":
-		m.sel = max(m.sel-1, 0)
-	case "g", "home":
-		m.sel = 0
-	case "G", "end":
-		m.sel = len(m.nb.Cells) - 1
-	case "ctrl+d":
-		m.offset += m.bodyHeight() / 2
-		m.manualScroll = true
-	case "ctrl+u":
-		m.offset -= m.bodyHeight() / 2
-		m.manualScroll = true
-	case "enter", "i":
-		return m.startEdit()
-	case "shift+enter", "ctrl+r":
-		return m.runAndAdvance()
-	case "ctrl+s":
-		m.save()
-	case "q", "ctrl+c":
-		if m.dirty && !m.quitArmed {
-			m.quitArmed = true
-			m.msg = "unsaved changes: ctrl+s to save, q again to quit anyway"
-			return nil
-		}
-		return tea.Quit
-	}
-	return nil
-}
-
-func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
-	switch msg.String() {
-	case "esc":
-		m.stopEdit()
-		return nil
-	case "shift+enter", "ctrl+r":
-		m.stopEdit()
-		return m.runAndAdvance()
-	case "ctrl+s":
-		m.commitEdit()
-		m.save()
-		return nil
-	case "tab":
-		m.ta.InsertString("    ")
-		m.sizeEditor()
-		return nil
-	}
-	m.sizeEditor()
 	var cmd tea.Cmd
-	m.ta, cmd = m.ta.Update(msg)
-	m.sizeEditor()
-	return cmd
+	switch m.mode {
+	case editMode:
+		m.ta, cmd = m.ta.Update(msg)
+	case cmdMode:
+		m.cmd, cmd = m.cmd.Update(msg)
+	}
+	return m, cmd
 }
 
-func (m *Model) startEdit() tea.Cmd {
+func (m *Model) startEdit(atEnd bool) tea.Cmd {
 	m.mode = editMode
 	m.ta.SetValue(m.cell().Source)
-	m.ta.MoveToBegin()
+	if atEnd {
+		m.ta.MoveToEnd()
+	} else {
+		m.ta.MoveToBegin()
+	}
 	m.sizeEditor()
 	return m.ta.Focus()
 }
@@ -281,6 +272,14 @@ func (m *Model) runAndAdvance() tea.Cmd {
 	return cmd
 }
 
+func (m *Model) runAll() tea.Cmd {
+	var cmds []tea.Cmd
+	for _, c := range m.nb.Cells {
+		cmds = append(cmds, m.execute(c))
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *Model) execute(c *notebook.Cell) tea.Cmd {
 	if c.Type != notebook.Code {
 		return nil
@@ -290,7 +289,7 @@ func (m *Model) execute(c *notebook.Cell) tea.Cmd {
 	}
 	switch m.kstate {
 	case "error", "dead":
-		m.msg = "kernel is not running"
+		m.msg = "kernel is not running, :restart to start one"
 		return nil
 	}
 	c.ClearOutputs()
@@ -312,12 +311,17 @@ func (m *Model) submit(c *notebook.Cell) tea.Cmd {
 		m.msg = "execute failed: " + err.Error()
 		return nil
 	}
-	return waitEvent(c, ch)
+	return waitEvent(m.k, c, ch)
 }
 
 func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 	if !e.ok {
 		return nil
+	}
+	// keep draining channels of a kernel we restarted away from, but
+	// don't let them touch cells
+	if e.k != m.k {
+		return waitEvent(e.k, e.cell, e.ch)
 	}
 	c := e.cell
 	switch e.ev.Kind {
@@ -340,7 +344,31 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 			m.msg = firstLine(e.ev.Err.Error())
 		}
 	}
-	return waitEvent(c, e.ch)
+	return waitEvent(e.k, c, e.ch)
+}
+
+func (m *Model) interrupt() tea.Cmd {
+	// cells still waiting for the kernel to come up just get dropped
+	for _, c := range m.pending {
+		delete(m.runs, c)
+	}
+	m.pending = nil
+	k := m.k
+	if k == nil {
+		return nil
+	}
+	m.msg = "interrupting"
+	return func() tea.Msg { return interruptMsg{k.Interrupt()} }
+}
+
+func (m *Model) restart() tea.Cmd {
+	old := m.k
+	m.k = nil
+	m.kstate = "restarting"
+	m.runs = map[*notebook.Cell]runState{}
+	m.pending = nil
+	m.msg = "restarting kernel"
+	return m.host.start(old)
 }
 
 func (m *Model) save() {
@@ -359,17 +387,17 @@ func (m *Model) waitStatus() tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case s := <-k.Status():
-			return statusMsg(s)
+			return statusMsg{k, s}
 		case <-k.Dead():
-			return statusMsg("dead")
+			return statusMsg{k, "dead"}
 		}
 	}
 }
 
-func waitEvent(c *notebook.Cell, ch <-chan kernel.Event) tea.Cmd {
+func waitEvent(k *kernel.Kernel, c *notebook.Cell, ch <-chan kernel.Event) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-ch
-		return eventMsg{cell: c, ch: ch, ev: ev, ok: ok}
+		return eventMsg{k: k, cell: c, ch: ch, ev: ev, ok: ok}
 	}
 }
 

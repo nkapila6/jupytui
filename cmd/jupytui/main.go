@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -50,16 +49,8 @@ func runTUI(path string) error {
 		return err
 	}
 
-	p := tea.NewProgram(ui.New(abs, nb))
-
-	// start the kernel beside the UI so the notebook shows up instantly
-	ctx, cancel := context.WithCancel(context.Background())
-	started := make(chan *kernel.Kernel, 1)
-	go func() {
-		k, err := kernel.Start(kernel.Options{Context: ctx, Dir: filepath.Dir(abs)})
-		started <- k
-		p.Send(ui.KernelMsg{Kernel: k, Err: err})
-	}()
+	m := ui.New(abs, nb, kernel.Options{Dir: filepath.Dir(abs)})
+	p := tea.NewProgram(m)
 
 	// terminal closed or we got killed politely: still clean up the kernel
 	sigs := make(chan os.Signal, 1)
@@ -70,10 +61,7 @@ func runTUI(path string) error {
 	}()
 
 	_, err = p.Run()
-	cancel()
-	if k := <-started; k != nil {
-		k.Shutdown()
-	}
+	m.Close()
 	return err
 }
 
