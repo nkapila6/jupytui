@@ -38,40 +38,53 @@ If the file doesn't exist it gets created on first save. The kernel starts in th
 
 Press `?` inside jupytui for the full list.
 
-**Normal mode**
+There are two levels, like jupyterlab-vim: the **notebook** (moving between cells) and **inside a cell** (a small vim). `enter` goes into a cell, `esc` comes back out.
 
-| key                      | action                                  |
-|--------------------------|-----------------------------------------|
-| `j` `k` / arrows         | move between cells                      |
-| `gg` `G`                 | first / last cell                       |
-| `ctrl+d` `ctrl+u`        | scroll half a page                      |
-| `enter` `i` / `A`        | edit cell, cursor at start / end        |
-| `e`                      | edit cell in nvim (see below)           |
-| `ctrl+r` `shift+enter`   | run cell and move to the next           |
-| `ctrl+c`                 | interrupt, or quit when nothing runs    |
-| `o` `O`                  | new cell below / above                  |
-| `dd` `u`                 | delete cell / undo delete               |
-| `yy` `p` `P`             | yank / paste below / paste above        |
-| `J` `K`                  | move cell down / up                     |
-| `M` `C` `R`              | make it markdown / code / raw           |
-| `x`                      | clear cell output                       |
-| `ctrl+s`                 | save                                    |
+**Notebook mode**
+
+| key                      | action                                       |
+|--------------------------|----------------------------------------------|
+| `j` `k`, `5j` `3k`       | move between cells (counts match the gutter) |
+| `gg` `G`, `12G`          | first / last / nth cell                      |
+| `ctrl+d` `ctrl+u`        | scroll half a page                           |
+| `enter` / `i` / `A`      | open cell in vim normal / insert / append    |
+| `s`                      | flash jump (see below)                       |
+| `e`                      | edit cell in nvim (see below)                |
+| `ctrl+enter`             | run cell                                     |
+| `shift+enter` `ctrl+r`   | run cell and move to the next                |
+| `ctrl+c`                 | interrupt, or quit when nothing runs         |
+| `o` `O`                  | new cell below / above                       |
+| `dd` `u`                 | delete cell / undo delete                    |
+| `yy` `p` `P`             | yank / paste below / paste above             |
+| `J` `K`                  | move cell down / up                          |
+| `M` `C` `R`              | make it markdown / code / raw                |
+| `x`                      | clear cell output                            |
+| `ctrl+s`                 | save                                         |
 | `q`                      | quit (asks again if there are unsaved changes) |
 
-**Edit mode**: `esc` back to normal, `ctrl+r` run, `ctrl+e` open in nvim, `ctrl+s` save.
+**Inside a cell** it's vim: motions (`hjkl w b e W B E 0 ^ $ gg G f t F T ; , % { }`), operators with motions and counts (`d c y > <`, `dd cc yy >> <<`, `3dw`, `d2j`), text objects (`iw aw i" a" i( a( i[ i{ ...`), `x X s S D C Y p P J ~ r`, `u` / `ctrl+r` undo/redo, `.` repeat, visual `v` / `V`. Enter after a `:` indents in Python.
+
+`esc` goes insert to normal, and normal back out to the notebook. `ctrl+enter` runs the cell, `shift+enter` runs and moves on, `ctrl+e` opens it in nvim.
+
+**Line numbers** run across the whole notebook as if it were one buffer, relative by default like LazyVim. So `5j` inside a cell moves exactly the number of lines shown, crossing into other cells, and `:42` / `42G` go to notebook line 42. Outputs don't count as lines.
+
+**Flash jump**: press `s`, type a couple of characters, and every match on screen gets a label; type the label to land there (inside the cell, in vim normal mode). Like flash.nvim, labels never use a letter that could continue your search, `enter` takes the closest match, `esc` cancels.
 
 **Commands**
 
-| command                  | action                       |
-|--------------------------|------------------------------|
-| `:w` `:q` `:q!` `:wq`    | the usual                    |
-| `:runall`                | run every code cell          |
-| `:clear`                 | clear all outputs            |
-| `:interrupt`             | interrupt the kernel         |
-| `:restart`               | restart the kernel           |
-| `:12`                    | jump to cell 12              |
+| command                  | action                              |
+|--------------------------|-------------------------------------|
+| `:w` `:q` `:q!` `:wq`    | the usual                           |
+| `:42`                    | go to notebook line 42              |
+| `:runall`                | run every code cell                 |
+| `:clear`                 | clear all outputs                   |
+| `:interrupt`             | interrupt the kernel                |
+| `:restart`               | restart the kernel                  |
+| `:set nu` `:set nonu`    | line numbers on / off               |
+| `:set rnu` `:set nornu`  | relative line numbers on / off      |
+| `:set novim` `:set vim`  | plain editing in cells instead of vim |
 
-`shift+enter` needs a terminal that supports the kitty keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). `ctrl+r` works everywhere.
+`ctrl+enter` and `shift+enter` need a terminal that supports the kitty keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). In the notebook, `ctrl+r` runs and moves on everywhere.
 
 ## Neovim (LazyVim)
 
@@ -85,7 +98,7 @@ end, { desc = "jupytui (current notebook)" })
 
 Open a notebook buffer, hit `<leader>jn`, and jupytui comes up in a float.
 
-Pressing `e` on a cell while inside nvim opens it in your actual nvim, not a nested one: the cell lands in a new tab as a `.py` file so your LSP, treesitter and keymaps all work. Every `:w` syncs straight back into the notebook, and `:wq` drops you back in the jupytui float. This works because nvim sets `$NVIM` for its terminals.
+Pressing `e` on a cell (or `ctrl+e` inside one) while in nvim opens it in your actual nvim, not a nested one: the cell lands in a new tab as a `.py` file so your LSP, treesitter and keymaps all work. Every `:w` syncs straight back into the notebook, and `:wq` drops you back in the jupytui float. This works because nvim sets `$NVIM` for its terminals.
 
 Outside nvim, `e` opens `$VISUAL` / `$EDITOR` (falling back to `vi`) full screen.
 

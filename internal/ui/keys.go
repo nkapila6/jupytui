@@ -19,8 +19,32 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 	m.msg = ""
 	m.manualScroll = false
 
+	// counts: 5j, 12G, 3gg
+	if len(key) == 1 && key[0] >= '0' && key[0] <= '9' && (key != "0" || m.count != "") {
+		m.count += key
+		return nil
+	}
+	n, _ := strconv.Atoi(m.count)
+	hasCount := m.count != ""
+	if m.pendingKey == "" {
+		defer func() {
+			if m.pendingKey == "" {
+				m.count = ""
+			}
+		}()
+	}
+	steps := max(n, 1)
+	jump := func(def int) {
+		if hasCount {
+			m.sel = max(0, min(n-1, len(m.nb.Cells)-1))
+		} else {
+			m.sel = def
+		}
+	}
+
 	if p := m.pendingKey; p != "" {
 		m.pendingKey = ""
+		m.count = ""
 		switch p + key {
 		case "dd":
 			m.deleteCell()
@@ -28,7 +52,7 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.yank = m.cell().Clone()
 			m.msg = "yanked cell"
 		case "gg":
-			m.sel = 0
+			jump(0)
 		}
 		return nil
 	}
@@ -37,11 +61,11 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "d", "y", "g":
 		m.pendingKey = key
 	case "j", "down":
-		m.sel = min(m.sel+1, len(m.nb.Cells)-1)
+		m.sel = min(m.sel+steps, len(m.nb.Cells)-1)
 	case "k", "up":
-		m.sel = max(m.sel-1, 0)
+		m.sel = max(m.sel-steps, 0)
 	case "G", "end":
-		m.sel = len(m.nb.Cells) - 1
+		jump(len(m.nb.Cells) - 1)
 	case "home":
 		m.sel = 0
 	case "ctrl+d":
@@ -51,10 +75,14 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.offset -= m.bodyHeight() / 2
 		m.manualScroll = true
 
-	case "enter", "i":
-		return m.startEdit(false)
+	case "enter":
+		return m.startEdit("normal")
+	case "i":
+		return m.startEdit("insert")
 	case "A":
-		return m.startEdit(true)
+		return m.startEdit("append")
+	case "s":
+		m.startFlash()
 	case "o":
 		return m.insertCell(m.sel + 1)
 	case "O":
@@ -99,9 +127,12 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	case "shift+enter", "ctrl+r":
 		return m.runAndAdvance()
+	case "ctrl+enter":
+		return m.execute(m.cell())
 	case "ctrl+s":
 		m.save()
 	case ":":
+		m.cmdFrom = normalMode
 		m.mode = cmdMode
 		m.cmd.Reset()
 		return m.cmd.Focus()
@@ -118,12 +149,24 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
+// keyTok turns a key press into what the vim editor expects: the typed
+// text for printable keys, otherwise the key's name.
+func keyTok(msg tea.KeyPressMsg) string {
+	k := msg.Key()
+	if k.Text != "" && k.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
+		return k.Text
+	}
+	return msg.String()
+}
+
 func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
+	m.msg = ""
+	e := m.ed
 	switch msg.String() {
-	case "esc":
-		m.stopEdit()
-		return nil
-	case "shift+enter", "ctrl+r":
+	case "ctrl+enter":
+		m.commitEdit()
+		return m.execute(m.cell())
+	case "shift+enter":
 		m.stopEdit()
 		return m.runAndAdvance()
 	case "ctrl+s":
@@ -137,34 +180,91 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 		if len(m.runs) > 0 {
 			return m.interrupt()
 		}
-		return nil
-	case "tab":
-		m.ta.InsertString("    ")
-		m.sizeEditor()
-		return nil
 	}
-	m.sizeEditor()
-	var cmd tea.Cmd
-	m.ta, cmd = m.ta.Update(msg)
-	m.sizeEditor()
-	return cmd
+	tok := keyTok(msg)
+	if e.vim && e.mode == vNormal && len(e.keys) == 0 {
+		switch tok {
+		case ":":
+			m.commitEdit()
+			m.cmdFrom = editMode
+			m.mode = cmdMode
+			m.cmd.Reset()
+			return m.cmd.Focus()
+		case "s":
+			// s is flash, like LazyVim; cl still does what s used to
+			m.startFlash()
+			return nil
+		}
+	}
+	res := e.key(tok)
+	m.commitEdit()
+	switch res {
+	case edLeave:
+		m.stopEdit()
+	case edCross:
+		m.gotoLine(m.lineStarts()[m.sel]+e.cur.row+e.jump, e.want)
+	case edGoto:
+		m.gotoLine(e.gotoLine-1, -2)
+	}
+	return nil
+}
+
+// lineStarts is the notebook-wide number of each cell's first source
+// line, plus the total at the end. Outputs don't count.
+func (m *Model) lineStarts() []int {
+	starts := make([]int, len(m.nb.Cells)+1)
+	for i, c := range m.nb.Cells {
+		n := strings.Count(c.Source, "\n") + 1
+		if m.mode == editMode && m.ed != nil && i == m.sel {
+			n = len(m.ed.lines)
+		}
+		starts[i+1] = starts[i] + n
+	}
+	return starts
+}
+
+// gotoLine opens the cell holding notebook line g (0-based) in vim
+// normal mode. col -1 means end of line, -2 first non-blank.
+func (m *Model) gotoLine(g, col int) {
+	starts := m.lineStarts()
+	g = max(0, min(g, starts[len(starts)-1]-1))
+	cell := 0
+	for cell+1 < len(m.nb.Cells) && starts[cell+1] <= g {
+		cell++
+	}
+	if m.mode == editMode {
+		m.stopEdit()
+	}
+	m.sel = cell
+	m.startEdit("normal")
+	e := m.ed
+	e.cur.row = g - starts[cell]
+	switch {
+	case col == -2:
+		e.cur.col = firstNonBlank(e.line(e.cur.row))
+	case col < 0:
+		e.cur.col = len(e.line(e.cur.row))
+	default:
+		e.cur.col = col
+	}
+	e.clamp()
+	if col != -2 {
+		e.want = col
+	}
 }
 
 func (m *Model) cmdKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc", "ctrl+c":
-		m.mode = normalMode
-		m.cmd.Blur()
+		m.leaveCmd()
 		return nil
 	case "enter":
 		line := strings.TrimSpace(m.cmd.Value())
-		m.mode = normalMode
-		m.cmd.Blur()
+		m.leaveCmd()
 		return m.runCommand(line)
 	case "backspace":
 		if m.cmd.Value() == "" {
-			m.mode = normalMode
-			m.cmd.Blur()
+			m.leaveCmd()
 			return nil
 		}
 	}
@@ -173,9 +273,23 @@ func (m *Model) cmdKey(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
+// leaveCmd goes back to wherever : was pressed from.
+func (m *Model) leaveCmd() {
+	m.cmd.Blur()
+	m.mode = normalMode
+	if m.cmdFrom == editMode && m.ed != nil {
+		m.mode = editMode
+	}
+}
+
 func (m *Model) runCommand(line string) tea.Cmd {
+	// :42 is notebook line 42, matching the line numbers
 	if n, err := strconv.Atoi(line); err == nil {
-		m.sel = max(0, min(n-1, len(m.nb.Cells)-1))
+		m.gotoLine(n-1, -2)
+		return nil
+	}
+	if opt, ok := strings.CutPrefix(line, "set "); ok {
+		m.setOption(strings.TrimSpace(opt))
 		return nil
 	}
 	switch line {
@@ -212,6 +326,34 @@ func (m *Model) runCommand(line string) tea.Cmd {
 	return nil
 }
 
+func (m *Model) setOption(opt string) {
+	switch opt {
+	case "nu", "number":
+		m.number = true
+	case "nonu", "nonumber":
+		m.number = false
+	case "rnu", "relativenumber":
+		m.relative = true
+	case "nornu", "norelativenumber":
+		m.relative = false
+	case "vim":
+		m.vimOn = true
+		if m.ed != nil {
+			m.ed.vim = true
+			m.ed.setMode(vNormal)
+		}
+	case "novim":
+		m.vimOn = false
+		if m.ed != nil {
+			m.ed.vim = false
+			m.ed.keys = nil
+			m.ed.setMode(vInsert)
+		}
+	default:
+		m.msg = "unknown option: " + opt
+	}
+}
+
 func (m *Model) quit(force bool) tea.Cmd {
 	if m.dirty && !force && !m.quitArmed {
 		m.quitArmed = true
@@ -225,7 +367,7 @@ func (m *Model) insertCell(at int) tea.Cmd {
 	m.nb.Insert(at, notebook.NewCell(notebook.Code))
 	m.sel = at
 	m.dirty = true
-	return m.startEdit(false)
+	return m.startEdit("insert")
 }
 
 func (m *Model) deleteCell() {

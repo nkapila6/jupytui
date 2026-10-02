@@ -2,10 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"path/filepath"
 	"strings"
 
-	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	gutter    = 7 // width of the "[12]" prompt column
+	gutter    = 10 // cell index + "[12]" prompt
 	minWidth  = 30
 	headerH   = 1
 	footerH   = 1
@@ -27,6 +27,8 @@ type styles struct {
 	header, footer            lipgloss.Style
 	dim, prompt, stderr       lipgloss.Style
 	errText, ok, busy         lipgloss.Style
+	selection, flashMatch     lipgloss.Style
+	flashLabel                lipgloss.Style
 	chroma                    string
 }
 
@@ -54,13 +56,17 @@ func (m *Model) applyTheme() {
 	}
 	st.header = st.dim.Bold(true)
 	st.footer = st.dim
-	m.st = st
 
-	ts := textarea.DefaultStyles(m.dark)
-	ts.Focused.CursorLine = ts.Focused.Text
-	ts.Focused.Base = lipgloss.NewStyle()
-	ts.Blurred.Base = lipgloss.NewStyle()
-	m.ta.SetStyles(ts)
+	bg := func(dark, light string) color.Color {
+		if m.dark {
+			return lipgloss.Color(dark)
+		}
+		return lipgloss.Color(light)
+	}
+	st.selection = lipgloss.NewStyle().Background(bg("#364a82", "#b6c8f4"))
+	st.flashMatch = lipgloss.NewStyle().Background(bg("#3d59a1", "#b6c8f4")).Foreground(bg("#c0caf5", "#1a1b26"))
+	st.flashLabel = lipgloss.NewStyle().Background(bg("#ff007c", "#d20065")).Foreground(lipgloss.Color("#ffffff")).Bold(true)
+	m.st = st
 
 	m.hlCache = map[string]string{}
 	m.mdCache = map[string]string{}
@@ -117,24 +123,52 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderFooter() string {
-	var left string
-	if m.mode == editMode {
-		left = m.st.editAccent.Bold(true).Render(" EDIT ")
-	} else {
-		left = m.st.accent.Bold(true).Render(" NORMAL ")
-	}
-	text := m.msg
-	if text == "" {
-		if m.mode == editMode {
-			text = "esc normal · ctrl+r run · ctrl+e $EDITOR · ctrl+s save"
-		} else {
-			text = "enter edit · ctrl+r run · : commands · ? help"
+	badge, text := "NOTEBOOK", "enter edit · ctrl+enter run · s jump · : commands · ? help"
+	st := m.st.accent
+	if m.mode == editMode && m.ed != nil {
+		st = m.st.editAccent
+		switch m.ed.mode {
+		case vInsert:
+			badge, text = "INSERT", "esc normal · ctrl+enter run · ctrl+e nvim"
+			if !m.ed.vim {
+				badge, text = "EDIT", "esc leave · ctrl+enter run · ctrl+e nvim"
+			}
+		case vVisual:
+			badge, text = "VISUAL", "d y c > < on selection · esc cancel"
+		case vVisualLine:
+			badge, text = "V-LINE", "d y c > < on selection · esc cancel"
+		default:
+			badge, text = "NORMAL", "esc leave cell · i insert · s jump · ctrl+enter run"
 		}
 	}
-	pos := fmt.Sprintf(" %d/%d ", m.sel+1, len(m.nb.Cells))
+	if m.flash != nil {
+		badge, text, st = "JUMP", "type to search, then a label · esc cancel", m.st.flashLabel
+		text = "/" + m.flash.pattern + "  " + m.st.dim.Render(text)
+	}
+	left := st.Bold(true).Render(" " + badge + " ")
+	if m.msg != "" && m.flash == nil {
+		text = m.msg
+	}
+	pending := m.count
+	if m.mode == editMode && m.ed != nil {
+		pending = m.ed.pending()
+	}
+	pos := fmt.Sprintf(" %s  %d/%d ", pending, m.sel+1, len(m.nb.Cells))
 	mid := m.st.footer.Render(" " + text)
 	gap := max(m.width-lipgloss.Width(left)-lipgloss.Width(mid)-len(pos), 1)
 	return ansi.Truncate(left+mid+strings.Repeat(" ", gap)+m.st.dim.Render(pos), m.width, "")
+}
+
+// layoutRow records what one body line shows, so the cursor and flash
+// labels can be placed on screen without re-deriving the wrapping.
+type layoutRow struct {
+	line  int // index into the body lines
+	cell  int
+	md    bool // rendered markdown line rather than source
+	src   int  // source line
+	dcol  int  // display column of the first char on this row
+	textX int  // screen column where text starts
+	width int  // text width of the row
 }
 
 // renderBody lays out every cell, scrolls so the selection (or the
@@ -142,19 +176,22 @@ func (m *Model) renderFooter() string {
 func (m *Model) renderBody() (string, *tea.Cursor) {
 	var (
 		lines     []string
+		layout    []layoutRow
 		selTop    int
 		selBottom int
-		editTop   = -1
 		bodyH     = m.bodyHeight()
 		width     = max(m.width, minWidth)
 	)
+	m.starts = m.lineStarts()
 	for i, c := range m.nb.Cells {
 		if i == m.sel {
 			selTop = len(lines)
 		}
-		cl, edit := m.renderCell(i, c)
-		if edit >= 0 {
-			editTop = len(lines) + edit
+		cl, rows := m.renderCell(i, c)
+		for _, r := range rows {
+			r.line += len(lines)
+			r.cell = i
+			layout = append(layout, r)
 		}
 		lines = append(lines, cl...)
 		if i == m.sel {
@@ -164,15 +201,19 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 	}
 
 	var cur *tea.Cursor
-	var curLine int
-	if m.mode == editMode && editTop >= 0 {
-		row, x := m.editCursor()
-		cur = tea.NewCursor(x, 0)
-		curLine = editTop + row
+	curLine := -1
+	if m.mode == editMode && m.ed != nil {
+		if r, x, ok := m.cursorRow(layout); ok {
+			cur = tea.NewCursor(x, 0)
+			curLine = r.line
+			if m.ed.mode == vInsert {
+				cur.Shape = tea.CursorBar
+			}
+		}
 	}
 
 	// keep the thing we care about on screen
-	if cur != nil {
+	if curLine >= 0 {
 		if curLine < m.offset {
 			m.offset = curLine
 		} else if curLine >= m.offset+bodyH {
@@ -187,32 +228,56 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 		}
 	}
 	m.offset = max(0, min(m.offset, len(lines)-bodyH))
+	m.layout = layout
 
 	end := min(m.offset+bodyH, len(lines))
-	visible := lines[m.offset:end]
+	visible := append([]string(nil), lines[m.offset:end]...)
 	for len(visible) < bodyH {
 		visible = append(visible, "")
 	}
 	for i, l := range visible {
 		visible[i] = ansi.Truncate(l, width, "")
 	}
+	if m.flash != nil {
+		visible = m.renderFlash(visible)
+	}
 
 	if cur != nil {
-		c := *cur
-		c.X += gutter + 2
-		c.Y = headerH + curLine - m.offset
-		cur = &c
+		cur.Y = headerH + curLine - m.offset
 	}
 	return strings.Join(visible, "\n"), cur
 }
 
-// renderCell returns the cell's lines and, if it holds the editor, the
-// line index where the editor starts (else -1).
-func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, int) {
+// cursorRow finds the layout row and screen x of the edit cursor.
+func (m *Model) cursorRow(layout []layoutRow) (layoutRow, int, bool) {
+	e := m.ed
+	dc := dispCol(e.line(e.cur.row), e.cur.col)
+	var hit layoutRow
+	found := false
+	for _, r := range layout {
+		if r.cell != m.sel || r.md || r.src != e.cur.row {
+			continue
+		}
+		// the last row of a line also takes the column just past the end
+		if !found || dc >= r.dcol {
+			hit, found = r, true
+		}
+		if dc < r.dcol+r.width {
+			break
+		}
+	}
+	if !found {
+		return hit, 0, false
+	}
+	return hit, hit.textX + dc - hit.dcol, true
+}
+
+// renderCell returns the cell's lines and the layout of its text rows,
+// with line indexes relative to the cell.
+func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow) {
 	selected := i == m.sel
-	editing := selected && m.mode == editMode
+	editing := selected && m.mode == editMode && m.ed != nil
 	boxW := m.boxWidth()
-	inner := boxW - 4
 
 	border := m.st.faint
 	if editing {
@@ -222,45 +287,86 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, int) {
 	}
 
 	if c.Type == notebook.Markdown && !editing {
-		return m.renderMarkdownCell(c, selected, boxW), -1
+		return m.renderMarkdownCell(i, c, selected, boxW)
 	}
 
-	// the textarea only handles input; edit mode draws through the same
-	// highlighter so it looks the same as normal mode, see editCursor
 	src := c.Source
 	if editing {
-		src = m.ta.Value()
+		src = m.ed.text()
 	}
-	var content string
+	hl := src
 	switch c.Type {
 	case notebook.Code:
-		content = m.highlight(src, m.lang)
+		hl = m.highlight(src, m.lang)
 	case notebook.Markdown:
-		content = m.highlight(src, "markdown")
-	default:
-		content = src
+		hl = m.highlight(src, "markdown")
 	}
-	var wrapped []string
-	for _, l := range strings.Split(expandTabs(content), "\n") {
-		wrapped = append(wrapped, strings.Split(ansi.Hardwrap(l, inner, true), "\n")...)
+	srcLines := strings.Split(src, "\n")
+	hlLines := strings.Split(expandTabs(hl), "\n")
+	for len(hlLines) < len(srcLines) {
+		hlLines = append(hlLines, "")
 	}
-	wrapped = carrySGR(wrapped)
+
+	// one width for the whole notebook so the columns line up
+	numW := 0
+	if m.number || m.relative {
+		numW = max(2, len(itoa(m.starts[len(m.starts)-1]))) + 1
+	}
+	inner := max(boxW-4-numW, 4)
+
+	var segs, nums []string
+	var rows []layoutRow
+	for r, src := range srcLines {
+		runes := []rune(src)
+		w := ansi.StringWidth(expandTabs(src))
+		nseg := max(1, (w+inner-1)/inner)
+		selFrom, selTo := m.selectedCols(editing, r, runes)
+		for k := range nseg {
+			seg := ansi.Cut(hlLines[r], k*inner, (k+1)*inner)
+			if s, e := max(selFrom, k*inner)-k*inner, min(selTo, (k+1)*inner)-k*inner; e > s {
+				part := ansi.Strip(ansi.Cut(seg, s, e))
+				seg = ansi.Cut(seg, 0, s) + m.st.selection.Render(padRight(part, e-s)) + ansi.Cut(seg, e, inner)
+			}
+			segs = append(segs, seg)
+			num := ""
+			if numW > 0 && k == 0 {
+				num = m.lineNumber(m.starts[i]+r, numW-1)
+			} else if numW > 0 {
+				num = strings.Repeat(" ", numW-1)
+			}
+			nums = append(nums, num)
+			rows = append(rows, layoutRow{src: r, dcol: k * inner, width: inner})
+		}
+	}
+	segs = carrySGR(segs)
+	content := make([]string, len(segs))
+	for j := range segs {
+		if numW > 0 {
+			content[j] = nums[j] + " " + segs[j]
+		} else {
+			content[j] = segs[j]
+		}
+	}
+
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(border.GetForeground()).
 		Padding(0, 1).
 		Width(boxW).
-		Render(strings.Join(wrapped, "\n"))
+		Render(strings.Join(content, "\n"))
 	boxLines := strings.Split(box, "\n")
 
-	pad := strings.Repeat(" ", gutter)
 	out := make([]string, 0, len(boxLines)+len(c.Outputs))
 	for j, l := range boxLines {
-		g := pad
+		g := strings.Repeat(" ", gutter)
 		if j == 1 {
-			g = m.prompt(c, selected)
+			g = m.prompt(i, c, selected)
 		}
 		out = append(out, g+l)
+	}
+	for j := range rows {
+		rows[j].line = j + 1
+		rows[j].textX = gutter + 2 + numW
 	}
 
 	if c.Type == notebook.Code {
@@ -269,14 +375,63 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, int) {
 			out = append(out, indent+l)
 		}
 	}
-	edit := -1
-	if editing {
-		edit = 1
-	}
-	return out, edit
+	return out, rows
 }
 
-func (m *Model) prompt(c *notebook.Cell, selected bool) string {
+// lineNumber is vim's number/relativenumber over the whole notebook as
+// one buffer: g is the notebook-wide line, distances count from the
+// cursor (or the selected cell's first line outside a cell).
+func (m *Model) lineNumber(g, w int) string {
+	if !m.relative {
+		return m.st.faint.Render(fmt.Sprintf("%*d", w, g+1))
+	}
+	ref := m.starts[m.sel]
+	if m.mode == editMode && m.ed != nil {
+		ref += m.ed.cur.row
+	}
+	d := g - ref
+	if d == 0 {
+		if m.number {
+			return m.st.accent.Render(fmt.Sprintf("%-*d", w, g+1))
+		}
+		return m.st.accent.Render(fmt.Sprintf("%*d", w, 0))
+	}
+	return m.st.faint.Render(fmt.Sprintf("%*d", w, max(d, -d)))
+}
+
+// selectedCols is the visual selection on source line r, as display
+// columns [from, to).
+func (m *Model) selectedCols(editing bool, r int, line []rune) (int, int) {
+	if !editing {
+		return 0, 0
+	}
+	a, b, lw, ok := m.ed.selection()
+	if !ok || r < a.row || r > b.row {
+		return 0, 0
+	}
+	w := dispCol(line, len(line))
+	if lw {
+		return 0, max(w, 1)
+	}
+	from, to := 0, w+1
+	if r == a.row {
+		from = dispCol(line, a.col)
+	}
+	if r == b.row {
+		to = dispCol(line, min(b.col+1, len(line)))
+		if b.col >= len(line) {
+			to = w + 1
+		}
+	}
+	return from, max(to, from+1)
+}
+
+// dispCol is the display width of line[:col] as drawn (tabs expanded).
+func dispCol(line []rune, col int) int {
+	return ansi.StringWidth(expandTabs(string(line[:min(col, len(line))])))
+}
+
+func (m *Model) prompt(i int, c *notebook.Cell, selected bool) string {
 	var p string
 	switch {
 	case c.Type != notebook.Code:
@@ -295,7 +450,17 @@ func (m *Model) prompt(c *notebook.Cell, selected bool) string {
 	if selected {
 		st = m.st.accent
 	}
-	return st.Render(fmt.Sprintf("%*s ", gutter-1, p))
+	return m.cellIndex(i) + " " + st.Render(fmt.Sprintf("%5s ", p))
+}
+
+// cellIndex works like relativenumber for cells: distance from the
+// selected cell, so 3j lands on the cell marked 3.
+func (m *Model) cellIndex(i int) string {
+	if i == m.sel {
+		return m.st.accent.Render(fmt.Sprintf("%-3d", i+1))
+	}
+	d := i - m.sel
+	return m.st.faint.Render(fmt.Sprintf("%3d", max(d, -d)))
 }
 
 func (m *Model) isRunning(c *notebook.Cell) bool {
@@ -303,7 +468,7 @@ func (m *Model) isRunning(c *notebook.Cell) bool {
 	return ok
 }
 
-func (m *Model) renderMarkdownCell(c *notebook.Cell, selected bool, boxW int) []string {
+func (m *Model) renderMarkdownCell(i int, c *notebook.Cell, selected bool, boxW int) ([]string, []layoutRow) {
 	bar := m.st.faint.Render("▏")
 	if selected {
 		bar = m.st.accent.Render("▌")
@@ -315,12 +480,17 @@ func (m *Model) renderMarkdownCell(c *notebook.Cell, selected bool, boxW int) []
 	} else {
 		body = m.markdown(src, boxW-2)
 	}
-	pad := strings.Repeat(" ", gutter)
 	var out []string
-	for _, l := range strings.Split(body, "\n") {
-		out = append(out, pad+bar+" "+l)
+	var rows []layoutRow
+	for j, l := range strings.Split(body, "\n") {
+		g := strings.Repeat(" ", gutter)
+		if j == 0 {
+			g = m.cellIndex(i) + strings.Repeat(" ", gutter-3)
+		}
+		out = append(out, g+bar+" "+l)
+		rows = append(rows, layoutRow{line: j, md: true, textX: gutter + 2, width: boxW - 2})
 	}
-	return out
+	return out, rows
 }
 
 func (m *Model) highlight(src, lang string) string {
@@ -349,28 +519,6 @@ func (m *Model) highlight(src, lang string) string {
 	}
 	m.hlCache[key] = s
 	return s
-}
-
-// editCursor maps the textarea's logical line/column onto the
-// hard-wrapped rows renderCell draws, as (row, x) inside the box.
-func (m *Model) editCursor() (int, int) {
-	inner := max(m.boxWidth()-4, 1)
-	lines := strings.Split(m.ta.Value(), "\n")
-	line := min(m.ta.Line(), len(lines)-1)
-	row := 0
-	for _, l := range lines[:line] {
-		row += max(1, (ansi.StringWidth(expandTabs(l))+inner-1)/inner)
-	}
-	runes := []rune(lines[line])
-	col := min(m.ta.Column(), len(runes))
-	w := ansi.StringWidth(expandTabs(string(runes[:col])))
-	full := ansi.StringWidth(expandTabs(lines[line]))
-	// cursor right after a line that exactly fills its last row stays on
-	// that row instead of jumping to a row that isn't drawn
-	if w > 0 && w%inner == 0 && w == full {
-		return row + w/inner - 1, inner
-	}
-	return row + w/inner, w % inner
 }
 
 // carrySGR re-opens a colour that's still active at the end of a line on
@@ -442,13 +590,15 @@ func (m *Model) markdown(src string, width int) string {
 }
 
 var helpText = [][2]string{
-	{"j k / arrows", "move between cells"},
-	{"gg G", "first / last cell"},
+	{"j k  5j 3k", "move between cells (counts match the gutter)"},
+	{"gg G  12G", "first / last / nth cell"},
 	{"ctrl+d ctrl+u", "scroll half a page"},
-	{"enter i / A", "edit cell (cursor at start / end)"},
-	{"e  (ctrl+e in edit)", "edit cell in $EDITOR or host nvim"},
-	{"esc", "back to normal mode"},
-	{"ctrl+r shift+enter", "run cell, move to next"},
+	{"enter / i / A", "open cell in vim normal / insert / append"},
+	{"esc", "insert -> normal -> back to the cell list"},
+	{"s", "flash jump: type, then the label"},
+	{"e  (ctrl+e in cell)", "edit cell in $EDITOR or host nvim"},
+	{"ctrl+enter", "run cell"},
+	{"shift+enter ctrl+r", "run cell, move to next"},
 	{"ctrl+c", "interrupt (or quit when idle)"},
 	{"o O", "new cell below / above"},
 	{"dd u", "delete cell / undo delete"},
@@ -461,6 +611,8 @@ var helpText = [][2]string{
 	{":runall :clear", "run all / clear all outputs"},
 	{":restart :interrupt", "kernel control"},
 	{":<n>", "jump to cell n"},
+	{":set [no]nu [no]rnu", "line numbers / relative numbers"},
+	{":set [no]vim", "vim editing inside cells"},
 }
 
 func (m *Model) renderHelp() string {

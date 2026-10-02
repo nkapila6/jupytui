@@ -127,6 +127,10 @@ func (m *Model) syncFromEditor() {
 	if c := m.ext.cell; c.Source != src {
 		c.Source = src
 		m.dirty = true
+		// keep an open in-app editor in step or its next key would undo this
+		if m.mode == editMode && m.ed != nil && m.cell() == c {
+			m.ed.setText(src)
+		}
 	}
 }
 

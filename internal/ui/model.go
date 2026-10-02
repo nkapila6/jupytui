@@ -6,11 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/nkapila6/jupytui/internal/kernel"
 	"github.com/nkapila6/jupytui/internal/notebook"
 )
@@ -69,13 +67,24 @@ type Model struct {
 
 	sel    int
 	mode   mode
-	ta     textarea.Model
 	cmd    textinput.Model
 	offset int
+	layout []layoutRow
+	starts []int // notebook-wide first line of each cell, set per render
+
+	// per-cell editors keep undo history while the app runs
+	ed      *editor
+	eds     map[*notebook.Cell]*editor
+	reg     register
+	cmdFrom mode
+	flash   *flashState
+
+	vimOn, number, relative bool
 	// set by ctrl+d/u so the view stops snapping to the selection
 	manualScroll bool
 
 	pendingKey string // first key of dd, yy, gg
+	count      string // count typed before a cell command, as in 5j
 	yank       *notebook.Cell
 	undo       []deleted
 	help       bool
@@ -114,13 +123,12 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 		dark:    true,
 		hlCache: map[string]string{},
 		mdCache: map[string]string{},
+		eds:     map[*notebook.Cell]*editor{},
+		vimOn:   true,
+		number:  true,
+		// relative by default, like LazyVim
+		relative: true,
 	}
-	m.ta = textarea.New()
-	m.ta.ShowLineNumbers = false
-	m.ta.Prompt = ""
-	m.ta.CharLimit = 0
-	m.ta.MaxHeight = 0
-	m.ta.SetVirtualCursor(false)
 	m.cmd = textinput.New()
 	m.cmd.Prompt = ":"
 	m.cmd.SetVirtualCursor(false)
@@ -142,7 +150,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.sizeEditor()
 		m.cmd.SetWidth(max(m.width-4, 10))
 		return m, nil
 
@@ -199,10 +206,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorDoneMsg, editorPollMsg:
 		return m, m.handleEditor(msg)
 
+	case tea.PasteMsg:
+		switch {
+		case m.mode == editMode && m.ed != nil:
+			m.ed.paste(msg.Content)
+			m.commitEdit()
+		case m.mode == cmdMode:
+			var cmd tea.Cmd
+			m.cmd, cmd = m.cmd.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		if m.help {
 			m.help = false
 			return m, nil
+		}
+		if m.flash != nil {
+			return m, m.flashKey(msg)
 		}
 		switch m.mode {
 		case editMode:
@@ -214,51 +236,73 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	switch m.mode {
-	case editMode:
-		m.ta, cmd = m.ta.Update(msg)
-	case cmdMode:
+	if m.mode == cmdMode {
 		m.cmd, cmd = m.cmd.Update(msg)
 	}
 	return m, cmd
 }
 
-func (m *Model) startEdit(atEnd bool) tea.Cmd {
-	m.mode = editMode
-	m.ta.SetValue(m.cell().Source)
-	if atEnd {
-		m.ta.MoveToEnd()
-	} else {
-		m.ta.MoveToBegin()
+// editorFor returns the cell's editor, picking up any change made to
+// the cell from outside (external editor, paste of a new cell).
+func (m *Model) editorFor(c *notebook.Cell) *editor {
+	e, ok := m.eds[c]
+	if !ok {
+		e = newEditor(c.Source, m.vimOn, &m.reg, strings.EqualFold(m.lang, "python"))
+		m.eds[c] = e
 	}
-	m.sizeEditor()
-	return m.ta.Focus()
+	e.setText(c.Source)
+	e.vim = m.vimOn
+	return e
+}
+
+// startEdit opens the selected cell. how is normal, insert or append.
+func (m *Model) startEdit(how string) tea.Cmd {
+	m.mode = editMode
+	m.ed = m.editorFor(m.cell())
+	m.ed.keys = nil
+	switch {
+	case !m.ed.vim:
+		m.ed.mode = vInsert
+		if how == "append" {
+			m.ed.cur = pos{m.ed.last(), len(m.ed.line(m.ed.last()))}
+		}
+	case how == "insert":
+		m.ed.save()
+		m.ed.startInsert([]string{"i"})
+	case how == "append":
+		m.ed.save()
+		m.ed.cur = pos{m.ed.last(), len(m.ed.line(m.ed.last()))}
+		m.ed.startInsert([]string{"A"})
+	default:
+		m.ed.setMode(vNormal)
+	}
+	m.ed.clamp()
+	return nil
 }
 
 func (m *Model) commitEdit() {
-	if c := m.cell(); c.Source != m.ta.Value() {
-		c.Source = m.ta.Value()
+	if m.ed == nil {
+		return
+	}
+	if c := m.cell(); c.Source != m.ed.text() {
+		c.Source = m.ed.text()
 		m.dirty = true
 	}
 }
 
 func (m *Model) stopEdit() {
 	m.commitEdit()
-	m.ta.Blur()
-	m.mode = normalMode
-}
-
-// sizeEditor grows the textarea to fit its content so it never scrolls
-// internally; the notebook view does the scrolling. One spare row avoids
-// a jump when a newline is typed.
-func (m *Model) sizeEditor() {
-	w := max(m.boxWidth()-4, 10)
-	m.ta.SetWidth(w)
-	rows := 1
-	for _, l := range strings.Split(m.ta.Value(), "\n") {
-		rows += max(1, (ansi.StringWidth(expandTabs(l))+w-1)/w)
+	if m.ed != nil {
+		if m.ed.mode == vInsert && m.ed.vim {
+			m.ed.finishInsert()
+		}
+		m.ed.keys = nil
+		if m.ed.mode != vInsert {
+			m.ed.setMode(vNormal)
+		}
 	}
-	m.ta.SetHeight(rows)
+	m.ed = nil
+	m.mode = normalMode
 }
 
 func (m *Model) runAndAdvance() tea.Cmd {
