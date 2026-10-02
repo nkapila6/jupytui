@@ -23,12 +23,31 @@ import (
 
 // DefaultCmd runs ipykernel in the project env via uv. --with layers
 // ipykernel on top so the project doesn't need it as a dependency.
-var DefaultCmd = []string{"uv", "run", "--with", "ipykernel", "python", "-m", "ipykernel_launcher", "-f", "{connection_file}"}
+var DefaultCmd = []string{"uv", "run", "--with", "ipykernel", "python", "-c", bootstrap, "-f", "{connection_file}"}
+
+// bootstrap starts ipykernel with a watchdog on jupytui's pid. ipykernel's
+// own parent poller only watches its direct parent, which is uv, and uv
+// happily outlives us if we get SIGKILLed or the terminal goes away.
+const bootstrap = `import os, shutil, sys, threading, time
+def _watch(pid=int(os.environ.get("JUPYTUI_PID", "0"))):
+    conn_dir = os.path.dirname(sys.argv[sys.argv.index("-f") + 1])
+    while pid:
+        time.sleep(1)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            shutil.rmtree(conn_dir, ignore_errors=True)
+            os._exit(1)
+threading.Thread(target=_watch, daemon=True).start()
+from ipykernel import kernelapp
+kernelapp.launch_new_instance()
+`
 
 type Options struct {
-	Dir          string        // working dir, uv picks the project env from here
-	Cmd          []string      // {connection_file} gets substituted
-	StartTimeout time.Duration // first uv run may have to download ipykernel
+	Context      context.Context // cancel to abort startup
+	Dir          string          // working dir, uv picks the project env from here
+	Cmd          []string        // {connection_file} gets substituted
+	StartTimeout time.Duration   // first uv run may have to download ipykernel
 }
 
 type Kernel struct {
@@ -71,6 +90,9 @@ func Start(opts Options) (*Kernel, error) {
 	if len(opts.Cmd) == 0 {
 		opts.Cmd = DefaultCmd
 	}
+	if opts.Context == nil {
+		opts.Context = context.Background()
+	}
 	if opts.StartTimeout == 0 {
 		opts.StartTimeout = 2 * time.Minute
 	}
@@ -89,6 +111,7 @@ func Start(opts Options) (*Kernel, error) {
 	}
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = opts.Dir
+	cmd.Env = append(os.Environ(), fmt.Sprintf("JUPYTUI_PID=%d", os.Getpid()))
 	logs := &tailBuffer{max: 16 << 10}
 	cmd.Stdout = logs
 	cmd.Stderr = logs
@@ -120,14 +143,14 @@ func Start(opts Options) (*Kernel, error) {
 		k.stop()
 	}()
 
-	if err := k.connect(opts.StartTimeout); err != nil {
+	if err := k.connect(opts.Context, opts.StartTimeout); err != nil {
 		k.Shutdown()
 		return nil, err
 	}
 	return k, nil
 }
 
-func (k *Kernel) connect(timeout time.Duration) error {
+func (k *Kernel) connect(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	// wait until the kernel has bound its ports
 	for {
@@ -139,6 +162,8 @@ func (k *Kernel) connect(timeout time.Duration) error {
 		select {
 		case <-k.dead:
 			return k.deathError("kernel exited during startup")
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
 		if time.Now().After(deadline) {
@@ -186,6 +211,8 @@ func (k *Kernel) connect(timeout time.Duration) error {
 		select {
 		case <-k.dead:
 			return k.deathError("kernel exited during startup")
+		case <-ctx.Done():
+			return ctx.Err()
 		default:
 		}
 	}
@@ -405,18 +432,22 @@ func (k *Kernel) Interrupt() error {
 func (k *Kernel) Shutdown() error {
 	select {
 	case <-k.dead:
+		return nil
 	default:
-		if k.control != nil {
-			if m, err := k.newMessage("shutdown_request", map[string]bool{"restart": false}); err == nil {
-				k.request(k.control, m, 2*time.Second)
-			}
+	}
+	// never connected (startup failed or was cancelled), nothing to ask nicely
+	grace := time.Duration(0)
+	if k.control != nil {
+		if m, err := k.newMessage("shutdown_request", map[string]bool{"restart": false}); err == nil {
+			k.request(k.control, m, 2*time.Second)
 		}
-		select {
-		case <-k.dead:
-		case <-time.After(3 * time.Second):
-			syscall.Kill(-k.cmd.Process.Pid, syscall.SIGKILL)
-			<-k.dead
-		}
+		grace = 3 * time.Second
+	}
+	select {
+	case <-k.dead:
+	case <-time.After(grace):
+		syscall.Kill(-k.cmd.Process.Pid, syscall.SIGKILL)
+		<-k.dead
 	}
 	return nil
 }
