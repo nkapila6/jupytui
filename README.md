@@ -211,6 +211,21 @@ Pressing `e` on a cell (or `ctrl+e` inside one) while in nvim opens it in your a
 
 Outside nvim, `e` opens `$VISUAL` / `$EDITOR` (falling back to `vi`) full screen.
 
+## Git
+
+Notebooks are JSON, which makes for miserable diffs and merges. jupytui can handle both:
+
+```sh
+jupytui diff old.ipynb new.ipynb     # cell-by-cell, coloured; --outputs for output changes too
+jupytui git setup                    # once per clone: wires the drivers below into this repo
+jupytui git setup --strip-outputs    # same, and commit notebooks without outputs
+jupytui clean nb.ipynb               # strip outputs and execution counts in place
+```
+
+After `git setup`, `git diff`, `git log -p` and `git show` print notebooks as code (`# %%` cells) with outputs summarised as `#>` comments, and `git merge` merges notebooks cell by cell: a cell changed on one side takes that side, and only a cell changed differently on both sides is a conflict, marked with `<<<<<<<` inside that cell (the file stays a valid notebook you can open and fix). `--strip-outputs` keeps outputs in your working copy but leaves them out of commits. `.gitattributes` gets committed; git config doesn't, so collaborators run `jupytui git setup` once too.
+
+Inside jupytui, `:set nosaveoutputs` saves without outputs.
+
 ## Recordings
 
 The top GIF is a screen recording of kitty: `demo/play.py` drives jupytui through the tour inside whatever terminal you run it in, so images show for real (start a screen recording, run `make demo-kitty`, press enter). The others are made with [VHS](https://github.com/charmbracelet/vhs) from the tapes in `demo/`. `make demos` re-records them (needs `vhs` and `uv`; the demo notebook has its own uv project in `demo/`).

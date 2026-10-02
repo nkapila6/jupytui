@@ -110,10 +110,12 @@ type Model struct {
 	execSrc  map[*notebook.Cell]string
 	statuses map[*notebook.Cell]cellStatus // per render
 	reactive bool
-	dfv      *frameView
-	comp     *compState
-	compSeq  int // latest completion request
-	compFrom int // request the open popup was built from
+
+	noSaveOutputs bool // :set nosaveoutputs
+	dfv           *frameView
+	comp          *compState
+	compSeq       int // latest completion request
+	compFrom      int // request the open popup was built from
 
 	lsp       *lsp.Client
 	lspState  string // "", starting, ready, failed
@@ -632,7 +634,11 @@ func (m *Model) restart() tea.Cmd {
 }
 
 func (m *Model) save() {
-	if err := m.nb.Save(m.path); err != nil {
+	nb := m.nb
+	if m.noSaveOutputs {
+		nb = nb.Stripped()
+	}
+	if err := nb.Save(m.path); err != nil {
 		m.msg = "save failed: " + err.Error()
 		return
 	}

@@ -492,6 +492,11 @@ func (m *Model) setOption(opt string) {
 			go m.lsp.Close()
 			m.lsp, m.lspState, m.diags = nil, "", nil
 		}
+	case "nosaveoutputs":
+		m.noSaveOutputs = true
+		m.msg = "saving without outputs (they stay on screen)"
+	case "saveoutputs":
+		m.noSaveOutputs = false
 	case "reactive":
 		m.reactive = true
 		m.msg = "reactive: dependent cells rerun automatically"

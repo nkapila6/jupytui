@@ -738,6 +738,7 @@ var helpText = [][2]string{
 	{":runall :clear", "run all / clear all outputs"},
 	{":runstale", "rerun cells marked ~ (edited) or ! (stale)"},
 	{":set [no]reactive", "rerun dependent cells automatically"},
+	{":set [no]saveoutputs", "save with or without outputs"},
 	{":export[!] [file.py]", "write a # %% percent .py"},
 	{":restart :interrupt", "kernel control"},
 	{":env", "pick the python environment (ssh hosts too)"},

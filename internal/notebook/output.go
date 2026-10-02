@@ -58,3 +58,15 @@ func (nb *Notebook) CellByID(id string) *Cell {
 	}
 	return nil
 }
+
+// Stripped is a copy without outputs or execution counts, for saving or
+// committing just the code.
+func (nb *Notebook) Stripped() *Notebook {
+	out := &Notebook{raw: nb.raw, Cells: make([]*Cell, len(nb.Cells))}
+	for i, c := range nb.Cells {
+		cp := *c
+		cp.Outputs, cp.ExecutionCount = nil, nil
+		out.Cells[i] = &cp
+	}
+	return out
+}

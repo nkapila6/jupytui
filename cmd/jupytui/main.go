@@ -25,6 +25,9 @@ const usage = `usage: jupytui <notebook.ipynb>        open (or create) a noteboo
        jupytui export [-f] [-o out.py] <notebook.ipynb>
                                        write a percent-format .py (# %% cells)
        jupytui sessions [kill <n>]           list (or stop) detached kernels
+       jupytui diff [--outputs] a.ipynb b.ipynb
+       jupytui clean [--stdin] nb.ipynb...    strip outputs
+       jupytui git setup [--strip-outputs]    notebook diff/merge drivers for this repo
        jupytui --version`
 
 // set by the Makefile; go install builds fall back to the module version
@@ -56,6 +59,16 @@ func main() {
 		err = session.RunKeeper(args[1])
 	case len(args) >= 1 && args[0] == "sessions":
 		err = sessions(args[1:])
+	case len(args) >= 1 && args[0] == "diff":
+		err = diffCmd(args[1:])
+	case len(args) >= 1 && args[0] == "textconv":
+		err = textconvCmd(args[1:])
+	case len(args) >= 1 && args[0] == "merge":
+		err = mergeCmd(args[1:])
+	case len(args) >= 1 && args[0] == "clean":
+		err = cleanCmd(args[1:])
+	case len(args) >= 1 && args[0] == "git":
+		err = gitCmd(args[1:])
 	case len(args) == 1 && args[0] != "-h" && args[0] != "--help":
 		err = runTUI(args[0])
 	default:
