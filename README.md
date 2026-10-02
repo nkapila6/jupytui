@@ -16,7 +16,11 @@ Notebooks are saved in the same format Jupyter writes, so diffs stay clean and t
 
 ## Install
 
-Grab a binary for macOS or Linux (arm64/amd64) from [releases](https://github.com/nkapila6/jupytui/releases), untar it, and put `jupytui` somewhere on your `PATH`.
+```sh
+curl -fsSL https://raw.githubusercontent.com/nkapila6/jupytui/main/install.sh | sh
+```
+
+That grabs the right binary for macOS or Linux (arm64/amd64) from [releases](https://github.com/nkapila6/jupytui/releases), checks it against the release checksums and puts it in `~/.local/bin` (set `INSTALL_DIR` to change that, `JUPYTUI_VERSION=v0.4.0` to pin a version). No sudo.
 
 Or with Go:
 
