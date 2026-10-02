@@ -132,6 +132,15 @@ type Model struct {
 	// rendered dataframe tables by width + html
 	tableCache map[string]string
 	imgCache   map[imgKey][]string
+
+	gfxMode    gfxMode
+	cellW      int
+	cellH      int
+	gfx        map[*notebook.Output]*gfxImage
+	nextGfxID  int
+	sixelWant  []sixelPlace // set by View
+	sixelDrawn []sixelPlace
+	sixelCache map[string]string
 	imgDir     string // temp files for gx
 	imgN       int
 	mdr        *glamour.TermRenderer
@@ -171,6 +180,10 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 		relative: true,
 	}
 	m.lspCtx, m.lspCancel = context.WithCancel(context.Background())
+	m.gfxMode = detectGraphics()
+	m.cellW, m.cellH = cellPixels()
+	m.gfx = map[*notebook.Output]*gfxImage{}
+	m.sixelCache = map[string]string{}
 	m.cmd = textinput.New()
 	m.cmd.Prompt = ":"
 	m.cmd.SetVirtualCursor(false)
@@ -180,6 +193,9 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options) *Model {
 
 // Close shuts down kernels and cleans temp files. Call after Run returns.
 func (m *Model) Close() {
+	if s := m.kittyClear(); s != "" {
+		os.Stdout.WriteString(s)
+	}
 	if m.imgDir != "" {
 		os.RemoveAll(m.imgDir)
 	}
@@ -192,7 +208,11 @@ func (m *Model) Close() {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, m.host.start(nil))
+	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.host.start(nil)}
+	if m.gfxMode == gfxSixel {
+		cmds = append(cmds, sixelTick())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -200,7 +220,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.cmd.SetWidth(max(m.width-4, 10))
-		return m, nil
+		m.cellW, m.cellH = cellPixels()
+		return m, m.syncKitty()
 
 	case tea.BackgroundColorMsg:
 		m.dark = msg.IsDark()
@@ -268,6 +289,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+
+	case sixelTickMsg:
+		return m, m.handleSixelTick()
+
+	case sixelDrawMsg:
+		return m, m.handleSixelDraw(msg)
 
 	case envsMsg:
 		m.handleEnvs(msg)
@@ -482,6 +509,7 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 	case kernel.EvOutput:
 		c.Outputs = mergeStream(c.Outputs, e.ev.Output)
 		m.dirty = true
+		return tea.Batch(waitEvent(e.k, c, e.ch), m.syncKitty())
 	case kernel.EvClear:
 		c.Outputs = nil
 	case kernel.EvDone:

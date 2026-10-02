@@ -16,16 +16,22 @@ import (
 // outputs make every frame slow and nobody scrolls through 50k lines.
 const maxOutputLines = 500
 
-// renderOutputs draws a cell's outputs as lines at most width wide.
-func (m *Model) renderOutputs(c *notebook.Cell, width int) []string {
+// renderOutputs draws a cell's outputs as lines at most width wide,
+// plus where any sixel images go.
+func (m *Model) renderOutputs(c *notebook.Cell, width int) ([]string, []outImg) {
 	var lines []string
+	var imgs []outImg
 	truncated := false
 	for _, o := range c.Outputs {
 		if truncated {
 			break
 		}
 		// images are already sized to width, skip the wrapping below
-		if img, ok := m.renderImage(o, width); ok {
+		if img, place, ok := m.renderImage(o, width); ok {
+			if place != nil {
+				place.line = len(lines)
+				imgs = append(imgs, *place)
+			}
 			lines = append(lines, img...)
 			continue
 		}
@@ -66,7 +72,7 @@ func (m *Model) renderOutputs(c *notebook.Cell, width int) []string {
 			}
 		}
 	}
-	return lines
+	return lines, imgs
 }
 
 // renderMime picks the richest mime type we can actually draw.

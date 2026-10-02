@@ -93,7 +93,10 @@ type flashHit struct {
 func (m *Model) renderFlash(visible []string) []string {
 	f := m.flash
 	for i, l := range visible {
-		visible[i] = m.st.dim.Render(ansi.Strip(l))
+		// image placeholders need their colour, it's the image id
+		if !hasPlaceholder(l) {
+			visible[i] = m.st.dim.Render(ansi.Strip(l))
+		}
 	}
 	f.targets, f.first = nil, nil
 	if f.pattern == "" {

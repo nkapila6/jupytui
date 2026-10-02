@@ -203,11 +203,16 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 		width     = max(m.width, minWidth)
 	)
 	m.starts = m.lineStarts()
+	var imgs []outImg
 	for i, c := range m.nb.Cells {
 		if i == m.sel {
 			selTop = len(lines)
 		}
-		cl, rows := m.renderCell(i, c)
+		cl, rows, cimgs := m.renderCell(i, c)
+		for _, im := range cimgs {
+			im.line += len(lines)
+			imgs = append(imgs, im)
+		}
 		for _, r := range rows {
 			r.line += len(lines)
 			r.cell = i
@@ -274,7 +279,29 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 	if cur != nil {
 		cur.Y = headerH + curLine - m.offset
 	}
+	m.sixelWant = m.sixelPlaces(imgs, bodyH)
 	return strings.Join(visible, "\n"), cur
+}
+
+// sixelPlaces is the visible part of each sixel image. Nothing while a
+// popup or overlay is up, since sixel would paint over it.
+func (m *Model) sixelPlaces(imgs []outImg, bodyH int) []sixelPlace {
+	if m.gfxMode != gfxSixel || m.help || m.picker != nil || m.flash != nil ||
+		m.comp != nil || m.hoverText != "" || m.sig != nil || m.mode == cmdMode {
+		return nil
+	}
+	var out []sixelPlace
+	for _, im := range imgs {
+		top, bottom := max(im.line, m.offset), min(im.line+im.rows, m.offset+bodyH)
+		if bottom <= top {
+			continue
+		}
+		out = append(out, sixelPlace{
+			id: im.id, x: gutter + 2, y: headerH + top - m.offset,
+			cols: im.cols, rows: bottom - top, cropTop: top - im.line,
+		})
+	}
+	return out
 }
 
 // cursorRow finds the layout row and screen x of the edit cursor.
@@ -301,9 +328,9 @@ func (m *Model) cursorRow(layout []layoutRow) (layoutRow, int, bool) {
 	return hit, hit.textX + dc - hit.dcol, true
 }
 
-// renderCell returns the cell's lines and the layout of its text rows,
-// with line indexes relative to the cell.
-func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow) {
+// renderCell returns the cell's lines, the layout of its text rows and
+// its sixel images, with line indexes relative to the cell.
+func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow, []outImg) {
 	selected := i == m.sel
 	editing := selected && m.mode == editMode && m.ed != nil
 	boxW := m.boxWidth()
@@ -316,7 +343,8 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow) {
 	}
 
 	if c.Type == notebook.Markdown && !editing {
-		return m.renderMarkdownCell(i, c, selected, boxW)
+		lines, rows := m.renderMarkdownCell(i, c, selected, boxW)
+		return lines, rows, nil
 	}
 
 	src := c.Source
@@ -410,13 +438,19 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, []layoutRow) {
 		rows[j].textX = gutter + 2 + numW
 	}
 
+	var imgs []outImg
 	if c.Type == notebook.Code {
 		indent := strings.Repeat(" ", gutter+2)
-		for _, l := range m.renderOutputs(c, boxW-2) {
+		outLines, oimgs := m.renderOutputs(c, boxW-2)
+		for _, im := range oimgs {
+			im.line += len(out)
+			imgs = append(imgs, im)
+		}
+		for _, l := range outLines {
 			out = append(out, indent+l)
 		}
 	}
-	return out, rows
+	return out, rows, imgs
 }
 
 // lineNumber is vim's number/relativenumber over the whole notebook as
@@ -683,6 +717,7 @@ var helpText = [][2]string{
 	{"K  gd", "hover docs / go to definition (lsp)"},
 	{"]d [d", "next / previous diagnostic"},
 	{":set [no]lsp [no]diag", "language server / diagnostics"},
+	{":set images=kitty|sixel|blocks", "how plots are drawn"},
 }
 
 func (m *Model) renderHelp() string {

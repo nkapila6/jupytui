@@ -366,7 +366,11 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		return nil
 	}
 	if opt, ok := strings.CutPrefix(line, "set "); ok {
-		m.setOption(strings.TrimSpace(opt))
+		opt = strings.TrimSpace(opt)
+		if v, ok := strings.CutPrefix(opt, "images="); ok {
+			return m.setGraphics(v)
+		}
+		m.setOption(opt)
 		return nil
 	}
 	switch line {
@@ -420,6 +424,32 @@ func (m *Model) export(path string, force bool) {
 		return
 	}
 	m.msg = "exported " + filepath.Base(path)
+}
+
+func (m *Model) setGraphics(v string) tea.Cmd {
+	g, ok := parseGfx(v)
+	if !ok {
+		m.msg = "images= kitty, sixel or blocks"
+		return nil
+	}
+	old := m.gfxMode
+	m.gfxMode = g
+	m.sixelDrawn = nil
+	for _, gi := range m.gfx {
+		gi.sent = false
+	}
+	m.msg = "images: " + g.String()
+	var cmds []tea.Cmd
+	if old == gfxKitty {
+		cmds = append(cmds, tea.Raw("\x1b_Ga=d,d=A,q=2\x1b\\"))
+	}
+	if old == gfxSixel || g == gfxSixel {
+		cmds = append(cmds, tea.ClearScreen)
+	}
+	if g == gfxSixel && old != gfxSixel {
+		cmds = append(cmds, sixelTick())
+	}
+	return tea.Batch(append(cmds, m.syncKitty())...)
 }
 
 func (m *Model) setOption(opt string) {

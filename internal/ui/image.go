@@ -61,19 +61,45 @@ func imageData(o *notebook.Output) (mime string, data []byte, ok bool) {
 	return "", nil, false
 }
 
-// renderImage returns the output as half-block lines, or false if it
-// has no image. Results are cached since this is the expensive bit.
-func (m *Model) renderImage(o *notebook.Output, width int) ([]string, bool) {
+// outImg is where an image sits in a cell's output lines, for sixel.
+type outImg struct {
+	line, id, cols, rows int
+}
+
+// renderImage returns the output's image lines, or false if it has no
+// image: kitty placeholders, blank cells for sixel to draw over, or
+// half blocks.
+func (m *Model) renderImage(o *notebook.Output, width int) ([]string, *outImg, bool) {
 	if o.OutputType != "display_data" && o.OutputType != "execute_result" {
-		return nil, false
+		return nil, nil, false
 	}
 	mt, data, ok := imageData(o)
 	if !ok {
-		return nil, false
+		return nil, nil, false
+	}
+	caption := func(b image.Rectangle) string {
+		return m.st.dim.Render(fmt.Sprintf("%s %d×%d · gx to open", mt, b.Dx(), b.Dy()))
+	}
+	switch m.gfxMode {
+	case gfxKitty:
+		// until the terminal has it, half blocks keep the space filled
+		if g := m.gfxFor(o); g != nil && g.sent && g.id != 0 {
+			return append(kittyLines(g), caption(g.img.Bounds())), nil, true
+		}
+	case gfxSixel:
+		if g := m.gfxFor(o); g != nil {
+			cols, rows := m.imgSize(g.img, width)
+			g.cols, g.rows = cols, rows
+			lines := make([]string, rows, rows+1)
+			for i := range lines {
+				lines[i] = strings.Repeat(" ", cols)
+			}
+			return append(lines, caption(g.img.Bounds())), &outImg{id: g.id, cols: cols, rows: rows}, true
+		}
 	}
 	key := imgKey{o, width, m.dark}
 	if lines, ok := m.imgCache[key]; ok {
-		return lines, true
+		return lines, nil, true
 	}
 	var lines []string
 	img, _, err := image.Decode(bytes.NewReader(data))
@@ -88,7 +114,15 @@ func (m *Model) renderImage(o *notebook.Output, width int) ([]string, bool) {
 		m.imgCache = map[imgKey][]string{}
 	}
 	m.imgCache[key] = lines
-	return lines, true
+	return lines, nil, true
+}
+
+// imageBG is what transparent pixels get blended onto.
+func (m *Model) imageBG() color.RGBA {
+	if m.dark {
+		return color.RGBA{0x1a, 0x1b, 0x26, 0xff}
+	}
+	return color.RGBA{0xff, 0xff, 0xff, 0xff}
 }
 
 func (m *Model) halfBlocks(img image.Image, maxW int) []string {
@@ -106,11 +140,7 @@ func (m *Model) halfBlocks(img image.Image, maxW int) []string {
 	}
 	th = max(th+th%2, 2)
 
-	bg := color.RGBA{0x1a, 0x1b, 0x26, 0xff}
-	if !m.dark {
-		bg = color.RGBA{0xff, 0xff, 0xff, 0xff}
-	}
-	px := boxResize(img, tw, th, bg)
+	px := boxResize(img, tw, th, m.imageBG())
 
 	var lines []string
 	for y := 0; y < th; y += 2 {
