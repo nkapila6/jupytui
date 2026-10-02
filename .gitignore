@@ -1,3 +1,4 @@
 /jupytui
 /dist/
 *.test
+*.got.ipynb
