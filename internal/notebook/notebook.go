@@ -261,11 +261,7 @@ func (o *Output) toRaw() (map[string]json.RawMessage, error) {
 		set("evalue", o.Evalue)
 		set("traceback", nonNil(o.Traceback))
 	case "execute_result", "display_data":
-		data := o.Data
-		if data == nil {
-			data = map[string]json.RawMessage{}
-		}
-		set("data", data)
+		set("data", splitMimeBundle(o.Data))
 		if _, ok := r["metadata"]; !ok {
 			r["metadata"] = json.RawMessage(`{}`)
 		}
@@ -291,20 +287,34 @@ func (o *Output) DataText(mime string) (string, bool) {
 	return s, true
 }
 
-// SetData stores a mime value. Strings are split into lines like nbformat does.
-func (o *Output) SetData(mime string, v any) error {
-	if o.Data == nil {
-		o.Data = map[string]json.RawMessage{}
+// NewOutput builds an output from an iopub message's type and content.
+func NewOutput(msgType string, content json.RawMessage) (*Output, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(content, &raw); err != nil {
+		return nil, err
 	}
-	if s, ok := v.(string); ok && !strings.HasPrefix(mime, "image/") {
-		v = splitLines(s)
+	// transient (display_id etc) is runtime-only and never saved
+	delete(raw, "transient")
+	raw["output_type"], _ = encode(msgType)
+	return parseOutput(raw)
+}
+
+// splitMimeBundle mirrors nbformat's _split_mimebundle.
+func splitMimeBundle(data map[string]json.RawMessage) map[string]json.RawMessage {
+	out := make(map[string]json.RawMessage, len(data))
+	for k, v := range data {
+		out[k] = v
+		if !strings.HasPrefix(k, "text/") && k != "image/svg+xml" && k != "application/javascript" {
+			continue
+		}
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			if b, err := encode(splitLines(s)); err == nil {
+				out[k] = b
+			}
+		}
 	}
-	b, err := encode(v)
-	if err != nil {
-		return err
-	}
-	o.Data[mime] = b
-	return nil
+	return out
 }
 
 func NewCell(t CellType) *Cell {
@@ -391,13 +401,28 @@ func multiline(raw json.RawMessage) (string, error) {
 	return strings.Join(lines, ""), nil
 }
 
-// splitLines keeps the trailing \n on each line, matching nbformat.
+// splitLines is Python's str.splitlines(True) for \n, \r and \r\n,
+// which is what nbformat uses. Progress bars lean on bare \r.
 func splitLines(s string) []string {
-	lines := strings.SplitAfter(s, "\n")
-	if lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
+	lines := []string{}
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\n':
+			lines = append(lines, s[start:i+1])
+			start = i + 1
+		case '\r':
+			if i+1 < len(s) && s[i+1] == '\n' {
+				i++
+			}
+			lines = append(lines, s[start:i+1])
+			start = i + 1
+		}
 	}
-	return nonNil(lines)
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
 }
 
 func decodeOpt(raw map[string]json.RawMessage, key string, dst any) error {
