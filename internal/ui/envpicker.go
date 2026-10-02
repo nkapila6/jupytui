@@ -101,8 +101,9 @@ func (m *Model) renderPicker() string {
 	// mark(2) + name(24) + space + path, inside padding(4) and border(2)
 	pathW := max(min(m.width-36, 60), 10)
 	for i, e := range p.list {
+		current := e.Kind == m.env.Kind && e.Python == m.env.Python
 		mark := "  "
-		if e.Kind == m.env.Kind && e.Python == m.env.Python {
+		if current {
 			mark = m.st.ok.Render("● ")
 		}
 		name := padRight(e.Label(), 24)
@@ -115,7 +116,12 @@ func (m *Model) renderPicker() string {
 		}
 		line := mark + name + " " + m.st.dim.Render(path)
 		if i == p.sel {
-			line = m.st.selection.Render(padRight(mark+name+" "+path, 26+pathW))
+			// plain text inside the highlight, a styled mark would reset its background
+			plain := "  "
+			if current {
+				plain = "● "
+			}
+			line = m.st.selection.Render(padRight(plain+name+" "+path, 26+pathW))
 		}
 		b.WriteString(line + "\n")
 	}
