@@ -28,6 +28,7 @@ type styles struct {
 	dim, prompt, stderr       lipgloss.Style
 	errText, ok, busy         lipgloss.Style
 	selection, flashMatch     lipgloss.Style
+	popup                     lipgloss.Style
 	flashLabel                lipgloss.Style
 	chroma                    string
 }
@@ -64,6 +65,7 @@ func (m *Model) applyTheme() {
 		return lipgloss.Color(light)
 	}
 	st.selection = lipgloss.NewStyle().Background(bg("#364a82", "#b6c8f4"))
+	st.popup = lipgloss.NewStyle().Background(bg("#1f2335", "#e9e9ed")).Foreground(bg("#a9b1d6", "#3760bf"))
 	st.flashMatch = lipgloss.NewStyle().Background(bg("#3d59a1", "#b6c8f4")).Foreground(bg("#c0caf5", "#1a1b26"))
 	st.flashLabel = lipgloss.NewStyle().Background(bg("#ff007c", "#d20065")).Foreground(lipgloss.Color("#ffffff")).Bold(true)
 	m.st = st
@@ -240,6 +242,9 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 	}
 	for i, l := range visible {
 		visible[i] = ansi.Truncate(l, width, "")
+	}
+	if m.comp != nil && cur != nil {
+		visible = m.renderCompletion(visible, cur.X, curLine-m.offset)
 	}
 	if m.flash != nil {
 		visible = m.renderFlash(visible)

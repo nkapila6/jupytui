@@ -185,6 +185,21 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 	tok := keyTok(msg)
+	if e.mode == vInsert {
+		if m.comp != nil {
+			if ok, cmd := m.compKey(msg.String()); ok {
+				return cmd
+			}
+		}
+		switch msg.String() {
+		case "ctrl+space", "ctrl+n":
+			return m.requestCompletion()
+		case "tab":
+			if wantsCompletion(e) {
+				return m.requestCompletion()
+			}
+		}
+	}
 	if e.vim && e.mode == vNormal && len(e.keys) == 0 {
 		switch tok {
 		case ":":
@@ -201,6 +216,7 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	res := e.key(tok)
 	m.commitEdit()
+	compCmd := m.afterInsertKey(tok)
 	switch res {
 	case edLeave:
 		m.stopEdit()
@@ -209,7 +225,7 @@ func (m *Model) editKey(msg tea.KeyPressMsg) tea.Cmd {
 	case edGoto:
 		m.gotoLine(e.gotoLine-1, -2)
 	}
-	return nil
+	return compCmd
 }
 
 // lineStarts is the notebook-wide number of each cell's first source

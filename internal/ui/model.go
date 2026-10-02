@@ -91,6 +91,9 @@ type Model struct {
 	help       bool
 	ext        *extEdit
 	picker     *envPicker
+	comp       *compState
+	compSeq    int // latest completion request
+	compFrom   int // request the open popup was built from
 	env        envs.Env
 
 	width, height int
@@ -235,6 +238,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleEnvs(msg)
 		return m, nil
 
+	case compMsg:
+		m.handleCompletion(msg)
+		return m, nil
+
 	case tea.KeyPressMsg:
 		if m.help {
 			m.help = false
@@ -322,6 +329,7 @@ func (m *Model) stopEdit() {
 		}
 	}
 	m.ed = nil
+	m.comp = nil
 	m.mode = normalMode
 }
 

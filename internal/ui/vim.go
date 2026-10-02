@@ -1500,6 +1500,17 @@ func (e *editor) join(r int) {
 	e.clamp()
 }
 
+// replaceInLine swaps runes [from, to) on row for text and puts the
+// cursor after it. Used for accepting completions.
+func (e *editor) replaceInLine(row, from, to int, text string) {
+	l := e.lines[row]
+	from, to = max(0, min(from, len(l))), max(0, min(to, len(l)))
+	r := []rune(text)
+	nl := append(append(append([]rune{}, l[:from]...), r...), l[to:]...)
+	e.lines[row] = nl
+	e.cur = pos{row, from + len(r)}
+}
+
 func leadingSpace(l []rune) string {
 	n := 0
 	for n < len(l) && (l[n] == ' ' || l[n] == '\t') {

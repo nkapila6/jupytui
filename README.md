@@ -87,6 +87,8 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 
 `esc` goes insert to normal, and normal back out to the notebook. `ctrl+enter` runs the cell, `shift+enter` runs and moves on, `ctrl+e` opens it in nvim.
 
+**Completions** pop up in insert mode after `.` or a couple of letters (or on `tab` / `ctrl+space`). They come from the running kernel, so they know what's actually in memory: `df.` lists your real columns. `ctrl+n` / `ctrl+p` (or `tab`, arrows) to move, `enter` to accept, `esc` to close the menu. `tab` still indents when there's nothing to complete.
+
 **Line numbers** run across the whole notebook as if it were one buffer, relative by default like LazyVim. So `5j` inside a cell moves exactly the number of lines shown, crossing into other cells, and `:42` / `42G` go to notebook line 42. Outputs don't count as lines.
 
 **Flash jump**: press `s`, type a couple of characters, and every match on screen gets a label; type the label to land there (inside the cell, in vim normal mode). Like flash.nvim, labels never use a letter that could continue your search, `enter` takes the closest match, `esc` cancels.
