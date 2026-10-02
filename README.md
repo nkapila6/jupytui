@@ -4,7 +4,9 @@ A small terminal UI for Jupyter notebooks. Open an `.ipynb`, run cells, see outp
 
 Built with Go and the [Charm](https://charm.sh) stack. Ships as a single static binary.
 
-![running a notebook: progress bar, DataFrame table and an inline plot](demo/tour.gif)
+![running a notebook in kitty: progress bar, DataFrame table and a plot shown with kitty graphics](demo/tour-kitty.gif)
+
+<sub>Recorded in kitty. The other recordings below are made with VHS, whose terminal can't show images, so plots there fall back to half blocks.</sub>
 
 ## How it works
 
@@ -161,7 +163,7 @@ Outside nvim, `e` opens `$VISUAL` / `$EDITOR` (falling back to `vi`) full screen
 
 ## Recordings
 
-The GIFs are made with [VHS](https://github.com/charmbracelet/vhs) from the tapes in `demo/`. `make demos` re-records them (needs `vhs` and `uv`; the demo notebook has its own uv project in `demo/`).
+The top GIF is a screen recording of kitty. The others are made with [VHS](https://github.com/charmbracelet/vhs) from the tapes in `demo/`. `make demos` re-records them (needs `vhs` and `uv`; the demo notebook has its own uv project in `demo/`).
 
 ## Status
 
