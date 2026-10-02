@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,12 +17,29 @@ import (
 )
 
 const usage = `usage: jupytui <notebook.ipynb>        open (or create) a notebook
-       jupytui exec <notebook.ipynb>   run all cells headless and print outputs`
+       jupytui exec <notebook.ipynb>   run all cells headless and print outputs
+       jupytui --version`
+
+// set by the Makefile; go install builds fall back to the module version
+var version = "dev"
+
+func getVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return version
+}
 
 func main() {
 	args := os.Args[1:]
 	var err error
 	switch {
+	case len(args) == 1 && (args[0] == "-v" || args[0] == "--version"):
+		fmt.Println("jupytui", getVersion())
+		return
 	case len(args) == 2 && args[0] == "exec":
 		err = execAll(args[1])
 	case len(args) == 1 && args[0] != "-h" && args[0] != "--help":
