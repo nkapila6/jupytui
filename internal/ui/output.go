@@ -17,7 +17,11 @@ const maxOutputLines = 500
 // renderOutputs draws a cell's outputs as lines at most width wide.
 func (m *Model) renderOutputs(c *notebook.Cell, width int) []string {
 	var lines []string
+	truncated := false
 	for _, o := range c.Outputs {
+		if truncated {
+			break
+		}
 		var s string
 		var style *lipgloss.Style
 		switch o.OutputType {
@@ -38,7 +42,15 @@ func (m *Model) renderOutputs(c *notebook.Cell, width int) []string {
 		if s == "" {
 			continue
 		}
-		for _, l := range strings.Split(s, "\n") {
+		// stop before wrapping everything, huge outputs would make
+		// every frame slow
+		raw := strings.Split(s, "\n")
+		for i, l := range raw {
+			if len(lines) >= maxOutputLines {
+				lines = append(lines, m.st.dim.Render(fmt.Sprintf("... output truncated, %d more lines", len(raw)-i)))
+				truncated = true
+				break
+			}
 			for _, w := range strings.Split(ansi.Hardwrap(l, width, true), "\n") {
 				if style != nil {
 					w = style.Render(w)
@@ -46,10 +58,6 @@ func (m *Model) renderOutputs(c *notebook.Cell, width int) []string {
 				lines = append(lines, w)
 			}
 		}
-	}
-	if len(lines) > maxOutputLines {
-		more := len(lines) - maxOutputLines
-		lines = append(lines[:maxOutputLines], m.st.dim.Render(fmt.Sprintf("... %d more lines", more)))
 	}
 	return lines
 }
@@ -70,27 +78,30 @@ func (m *Model) renderMime(o *notebook.Output, width int) string {
 	return m.st.dim.Render("[" + strings.Join(mimes, ", ") + "]")
 }
 
-// termText applies carriage returns the way a terminal would, so
-// progress bars (tqdm etc) show their latest state instead of every frame.
+// termText is stream text as a terminal would show it.
 func termText(s string) string {
+	return strings.ReplaceAll(collapseCR(s), "\r", "")
+}
+
+// collapseCR drops text that a carriage return has overwritten, so a
+// tqdm bar keeps only its latest frame (JupyterLab does the same). A
+// trailing \r is kept since the next chunk is meant to overwrite.
+func collapseCR(s string) string {
 	if !strings.Contains(s, "\r") {
 		return s
 	}
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
+		trail := strings.HasSuffix(l, "\r")
+		l = strings.TrimSuffix(l, "\r")
 		if j := strings.LastIndex(l, "\r"); j >= 0 {
-			// a trailing \r means the next write redraws; keep what's there
-			if j == len(l)-1 {
-				l = l[:j]
-				if k := strings.LastIndex(l, "\r"); k >= 0 {
-					l = l[k+1:]
-				}
-			} else {
-				l = l[j+1:]
-			}
-			lines[i] = l
+			l = l[j+1:]
 		}
+		if trail {
+			l += "\r"
+		}
+		lines[i] = l
 	}
 	return strings.Join(lines, "\n")
 }
@@ -102,13 +113,17 @@ func expandTabs(s string) string {
 // mergeStream appends to the previous output when it's the same stream,
 // like Jupyter does, so \r redraws work across chunks.
 func mergeStream(outs []*notebook.Output, o *notebook.Output) []*notebook.Output {
-	if o.OutputType == "stream" && len(outs) > 0 {
+	if o.OutputType != "stream" {
+		return append(outs, o)
+	}
+	if len(outs) > 0 {
 		last := outs[len(outs)-1]
 		if last.OutputType == "stream" && last.Name == o.Name {
-			last.Text += o.Text
+			last.Text = collapseCR(last.Text + o.Text)
 			return outs
 		}
 	}
+	o.Text = collapseCR(o.Text)
 	return append(outs, o)
 }
 

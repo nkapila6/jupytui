@@ -368,7 +368,12 @@ func (c *Cell) Clone() *Cell {
 	cp := *c
 	cp.ID = newID()
 	cp.raw = copyRaw(c.raw)
-	cp.Outputs = append([]*Output(nil), c.Outputs...)
+	cp.Outputs = make([]*Output, len(c.Outputs))
+	for i, o := range c.Outputs {
+		oc := *o
+		oc.raw = copyRaw(o.raw)
+		cp.Outputs[i] = &oc
+	}
 	return &cp
 }
 
