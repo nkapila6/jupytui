@@ -166,10 +166,9 @@ func (m *Model) renderBody() (string, *tea.Cursor) {
 	var cur *tea.Cursor
 	var curLine int
 	if m.mode == editMode && editTop >= 0 {
-		if c := m.ta.Cursor(); c != nil {
-			cur = c
-			curLine = editTop + c.Y
-		}
+		row, x := m.editCursor()
+		cur = tea.NewCursor(x, 0)
+		curLine = editTop + row
 	}
 
 	// keep the thing we care about on screen
@@ -226,23 +225,26 @@ func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, int) {
 		return m.renderMarkdownCell(c, selected, boxW), -1
 	}
 
+	// the textarea only handles input; edit mode draws through the same
+	// highlighter so it looks the same as normal mode, see editCursor
+	src := c.Source
+	if editing {
+		src = m.ta.Value()
+	}
 	var content string
-	switch {
-	case editing:
-		content = strings.TrimRight(m.ta.View(), "\n")
-	case c.Type == notebook.Code:
-		content = m.highlight(c.Source)
+	switch c.Type {
+	case notebook.Code:
+		content = m.highlight(src, m.lang)
+	case notebook.Markdown:
+		content = m.highlight(src, "markdown")
 	default:
-		content = c.Source
+		content = src
 	}
 	var wrapped []string
 	for _, l := range strings.Split(expandTabs(content), "\n") {
-		if editing {
-			wrapped = append(wrapped, l)
-			continue
-		}
 		wrapped = append(wrapped, strings.Split(ansi.Hardwrap(l, inner, true), "\n")...)
 	}
+	wrapped = carrySGR(wrapped)
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(border.GetForeground()).
@@ -321,20 +323,89 @@ func (m *Model) renderMarkdownCell(c *notebook.Cell, selected bool, boxW int) []
 	return out
 }
 
-func (m *Model) highlight(src string) string {
+func (m *Model) highlight(src, lang string) string {
 	if src == "" {
 		return ""
 	}
-	if s, ok := m.hlCache[src]; ok {
+	key := lang + "\x00" + src
+	if s, ok := m.hlCache[key]; ok {
 		return s
 	}
 	var b strings.Builder
-	if err := quick.Highlight(&b, src, m.lang, "terminal256", m.st.chroma); err != nil {
+	if err := quick.Highlight(&b, src, lang, "terminal256", m.st.chroma); err != nil {
 		return src
 	}
-	s := strings.TrimRight(b.String(), "\n")
-	m.hlCache[src] = s
+	// lexers may add or eat a trailing newline; the line count has to
+	// match the source or the edit cursor lands on the wrong row
+	want := strings.Count(src, "\n") + 1
+	lines := strings.Split(b.String(), "\n")
+	for len(lines) < want {
+		lines = append(lines, "")
+	}
+	s := strings.Join(lines[:want], "\n")
+	// typing makes a new entry per keystroke, don't let that pile up
+	if len(m.hlCache) > 1000 {
+		m.hlCache = map[string]string{}
+	}
+	m.hlCache[key] = s
 	return s
+}
+
+// editCursor maps the textarea's logical line/column onto the
+// hard-wrapped rows renderCell draws, as (row, x) inside the box.
+func (m *Model) editCursor() (int, int) {
+	inner := max(m.boxWidth()-4, 1)
+	lines := strings.Split(m.ta.Value(), "\n")
+	line := min(m.ta.Line(), len(lines)-1)
+	row := 0
+	for _, l := range lines[:line] {
+		row += max(1, (ansi.StringWidth(expandTabs(l))+inner-1)/inner)
+	}
+	runes := []rune(lines[line])
+	col := min(m.ta.Column(), len(runes))
+	w := ansi.StringWidth(expandTabs(string(runes[:col])))
+	full := ansi.StringWidth(expandTabs(lines[line]))
+	// cursor right after a line that exactly fills its last row stays on
+	// that row instead of jumping to a row that isn't drawn
+	if w > 0 && w%inner == 0 && w == full {
+		return row + w/inner - 1, inner
+	}
+	return row + w/inner, w % inner
+}
+
+// carrySGR re-opens a colour that's still active at the end of a line on
+// the next one. Chroma emits one escape per token, so multi-line strings
+// and wrapped lines would otherwise lose their colour after line one.
+func carrySGR(lines []string) []string {
+	active := ""
+	for i, l := range lines {
+		if active != "" {
+			l = active + l
+		}
+		for j := 0; j < len(l); {
+			k := strings.Index(l[j:], "\x1b[")
+			if k < 0 {
+				break
+			}
+			start := j + k
+			end := strings.IndexByte(l[start:], 'm')
+			if end < 0 {
+				break
+			}
+			seq := l[start : start+end+1]
+			if seq == "\x1b[0m" || seq == "\x1b[m" {
+				active = ""
+			} else {
+				active = seq
+			}
+			j = start + end + 1
+		}
+		if active != "" {
+			l += "\x1b[0m"
+		}
+		lines[i] = l
+	}
+	return lines
 }
 
 // markdown renders with glamour and trims the blank margins it adds.
