@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	gutter    = 10 // cell index + "[12]" prompt
+	gutter    = 7 // width of the "[12]" prompt column
 	minWidth  = 30
 	headerH   = 1
 	footerH   = 1
@@ -512,17 +512,7 @@ func (m *Model) prompt(i int, c *notebook.Cell, selected bool) string {
 	if selected {
 		st = m.st.accent
 	}
-	return m.cellIndex(i) + " " + st.Render(fmt.Sprintf("%5s ", p))
-}
-
-// cellIndex works like relativenumber for cells: distance from the
-// selected cell, so 3j lands on the cell marked 3.
-func (m *Model) cellIndex(i int) string {
-	if i == m.sel {
-		return m.st.accent.Render(fmt.Sprintf("%-3d", i+1))
-	}
-	d := i - m.sel
-	return m.st.faint.Render(fmt.Sprintf("%3d", max(d, -d)))
+	return st.Render(fmt.Sprintf("%*s ", gutter-1, p))
 }
 
 func (m *Model) isRunning(c *notebook.Cell) bool {
@@ -554,7 +544,6 @@ func (m *Model) renderMarkdownCell(i int, c *notebook.Cell, selected bool, boxW 
 		g := strings.Repeat(" ", gutter)
 		num := strings.Repeat(" ", numW)
 		if j == 0 {
-			g = m.cellIndex(i) + strings.Repeat(" ", gutter-3)
 			if numW > 0 {
 				num = m.lineNumber(m.starts[i], numW-1) + " "
 			}
@@ -662,8 +651,9 @@ func (m *Model) markdown(src string, width int) string {
 }
 
 var helpText = [][2]string{
-	{"j k  5j 3k", "move between cells (counts match the gutter)"},
-	{"gg G  12G", "first / last / nth cell"},
+	{"j k", "move between cells"},
+	{"5j 3k  12G", "jump by the line numbers, into that cell"},
+	{"gg G", "first / last cell"},
 	{"ctrl+d ctrl+u", "scroll half a page"},
 	{"enter / i / A", "open cell in vim normal / insert / append"},
 	{"esc", "insert -> normal -> back to the cell list"},

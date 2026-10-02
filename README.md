@@ -65,8 +65,9 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 
 | key                      | action                                       |
 |--------------------------|----------------------------------------------|
-| `j` `k`, `5j` `3k`       | move between cells (counts match the gutter) |
-| `gg` `G`, `12G`          | first / last / nth cell                      |
+| `j` `k`                  | move between cells                           |
+| `5j` `3k` `12G`          | jump by the line numbers, opening that cell  |
+| `gg` `G`                 | first / last cell                            |
 | `ctrl+d` `ctrl+u`        | scroll half a page                           |
 | `enter` / `i` / `A`      | open cell in vim normal / insert / append    |
 | `s`                      | flash jump (see below)                       |
@@ -96,7 +97,7 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 
 It runs basedpyright's `basic` checks with "unused expression" off, since a bare `df.head()` at the end of a cell is the point of a notebook. `:set nolsp` turns it off, `:set nodiag` just hides diagnostics.
 
-**Line numbers** run across the whole notebook as if it were one buffer, relative by default like LazyVim. So `5j` inside a cell moves exactly the number of lines shown, crossing into other cells, and `:42` / `42G` go to notebook line 42. Outputs don't count as lines.
+**Line numbers** run across the whole notebook as if it were one buffer, relative by default like LazyVim. There's one numbering for everything: `5j` moves exactly the number of lines shown, crossing into other cells, in a cell or from the notebook view (where it opens the cell at that line), and `:42` / `42G` go to notebook line 42. In the notebook view the numbers count from the selected cell's first line. Outputs don't count as lines.
 
 **Flash jump**: press `s`, type a couple of characters, and every match on screen gets a label; type the label to land there (inside the cell, in vim normal mode). Like flash.nvim, labels never use a letter that could continue your search, `enter` takes the closest match, `esc` cancels.
 

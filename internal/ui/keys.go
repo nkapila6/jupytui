@@ -36,10 +36,12 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 			}
 		}()
 	}
-	steps := max(n, 1)
+	// with a count, j/k/G/gg go by the line numbers on screen (one
+	// numbering for the whole notebook) and open the cell at that line;
+	// without one they move between cells
 	jump := func(def int) {
 		if hasCount {
-			m.sel = max(0, min(n-1, len(m.nb.Cells)-1))
+			m.gotoLine(n-1, -2)
 		} else {
 			m.sel = def
 		}
@@ -68,9 +70,17 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "d", "y", "g", "]", "[":
 		m.pendingKey = key
 	case "j", "down":
-		m.sel = min(m.sel+steps, len(m.nb.Cells)-1)
+		if hasCount {
+			m.gotoLine(m.lineStarts()[m.sel]+n, -2)
+		} else {
+			m.sel = min(m.sel+1, len(m.nb.Cells)-1)
+		}
 	case "k", "up":
-		m.sel = max(m.sel-steps, 0)
+		if hasCount {
+			m.gotoLine(m.lineStarts()[m.sel]-n, -2)
+		} else {
+			m.sel = max(m.sel-1, 0)
+		}
 	case "G", "end":
 		jump(len(m.nb.Cells) - 1)
 	case "home":
