@@ -1,28 +1,80 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/nkapila6/jupytui/internal/kernel"
 	"github.com/nkapila6/jupytui/internal/notebook"
+	"github.com/nkapila6/jupytui/internal/ui"
 )
+
+const usage = `usage: jupytui <notebook.ipynb>        open (or create) a notebook
+       jupytui exec <notebook.ipynb>   run all cells headless and print outputs`
 
 func main() {
 	args := os.Args[1:]
-	if len(args) == 2 && args[0] == "exec" {
-		if err := execAll(args[1]); err != nil {
-			fmt.Fprintln(os.Stderr, "jupytui:", err)
-			os.Exit(1)
-		}
-		return
+	var err error
+	switch {
+	case len(args) == 2 && args[0] == "exec":
+		err = execAll(args[1])
+	case len(args) == 1 && args[0] != "-h" && args[0] != "--help":
+		err = runTUI(args[0])
+	default:
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
 	}
-	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: jupytui <notebook.ipynb>\n       jupytui exec <notebook.ipynb>")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "jupytui:", err)
 		os.Exit(1)
 	}
-	fmt.Println("jupytui:", args[0])
+}
+
+func runTUI(path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	nb, err := notebook.Load(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		nb, err = notebook.New(), nil
+	}
+	if err != nil {
+		return err
+	}
+
+	p := tea.NewProgram(ui.New(abs, nb))
+
+	// start the kernel beside the UI so the notebook shows up instantly
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan *kernel.Kernel, 1)
+	go func() {
+		k, err := kernel.Start(kernel.Options{Context: ctx, Dir: filepath.Dir(abs)})
+		started <- k
+		p.Send(ui.KernelMsg{Kernel: k, Err: err})
+	}()
+
+	// terminal closed or we got killed politely: still clean up the kernel
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		p.Quit()
+	}()
+
+	_, err = p.Run()
+	cancel()
+	if k := <-started; k != nil {
+		k.Shutdown()
+	}
+	return err
 }
 
 // execAll runs every code cell headless and prints outputs. Handy for

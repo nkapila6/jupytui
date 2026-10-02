@@ -32,6 +32,25 @@ vim.keymap.set("n", "<leader>jn", function()
 end, { desc = "jupytui (current notebook)" })
 ```
 
+If the file doesn't exist it gets created on first save. The kernel starts in the background, so you can move around while uv sets it up.
+
+`jupytui exec notebook.ipynb` runs every code cell headless and prints the output, mostly useful for debugging.
+
+## Keys
+
+| mode   | key                       | action                          |
+|--------|---------------------------|---------------------------------|
+| normal | `j` `k` / arrows          | move between cells              |
+| normal | `g` `G`                   | first / last cell               |
+| normal | `ctrl+d` `ctrl+u`         | scroll half a page              |
+| normal | `enter` / `i`             | edit cell                       |
+| both   | `ctrl+r` / `shift+enter`  | run cell and move to next       |
+| both   | `ctrl+s`                  | save                            |
+| edit   | `esc`                     | back to normal mode             |
+| normal | `q`                       | quit (asks twice if unsaved)    |
+
+`shift+enter` needs a terminal that supports the kitty keyboard protocol (Ghostty, kitty, WezTerm, recent iTerm2). `ctrl+r` works everywhere.
+
 ## Status
 
-Early. Things are being built step by step.
+Early. Running, editing and saving work. Vim-style cell ops, `$EDITOR` editing, interrupt and restart are next.

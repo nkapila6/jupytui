@@ -386,6 +386,26 @@ func (nb *Notebook) KernelName() string {
 	return md.Kernelspec.Name
 }
 
+// Language is the notebook's language for highlighting, default python.
+func (nb *Notebook) Language() string {
+	var md struct {
+		LanguageInfo struct {
+			Name string `json:"name"`
+		} `json:"language_info"`
+		Kernelspec struct {
+			Language string `json:"language"`
+		} `json:"kernelspec"`
+	}
+	json.Unmarshal(nb.raw["metadata"], &md)
+	switch {
+	case md.LanguageInfo.Name != "":
+		return md.LanguageInfo.Name
+	case md.Kernelspec.Language != "":
+		return md.Kernelspec.Language
+	}
+	return "python"
+}
+
 func multiline(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 {
 		return "", nil

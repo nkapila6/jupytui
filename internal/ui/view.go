@@ -1,0 +1,359 @@
+package ui
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/alecthomas/chroma/v2/quick"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/nkapila6/jupytui/internal/notebook"
+)
+
+const (
+	gutter    = 7 // width of the "[12]" prompt column
+	minWidth  = 30
+	headerH   = 1
+	footerH   = 1
+	spinChars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+)
+
+type styles struct {
+	accent, editAccent, faint lipgloss.Style
+	header, footer            lipgloss.Style
+	dim, prompt, stderr       lipgloss.Style
+	errText, ok, busy         lipgloss.Style
+	chroma                    string
+}
+
+func (m *Model) applyTheme() {
+	pick := func(dark, light string) lipgloss.Style {
+		if m.dark {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(dark))
+		}
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(light))
+	}
+	st := styles{
+		accent:     pick("#7aa2f7", "#2e59c8"),
+		editAccent: pick("#9ece6a", "#3d7a1a"),
+		faint:      pick("#3b4261", "#c8cbd6"),
+		dim:        pick("#737aa2", "#8a8fa8"),
+		prompt:     pick("#737aa2", "#8a8fa8"),
+		stderr:     pick("#e0af68", "#9a6700"),
+		errText:    pick("#f7768e", "#c4314b"),
+		ok:         pick("#9ece6a", "#3d7a1a"),
+		busy:       pick("#e0af68", "#9a6700"),
+		chroma:     "monokai",
+	}
+	if !m.dark {
+		st.chroma = "friendly"
+	}
+	st.header = st.dim.Bold(true)
+	st.footer = st.dim
+	m.st = st
+
+	ts := textarea.DefaultStyles(m.dark)
+	ts.Focused.CursorLine = ts.Focused.Text
+	ts.Focused.Base = lipgloss.NewStyle()
+	ts.Blurred.Base = lipgloss.NewStyle()
+	m.ta.SetStyles(ts)
+
+	m.hlCache = map[string]string{}
+	m.mdCache = map[string]string{}
+	m.mdr = nil
+}
+
+func (m *Model) bodyHeight() int { return max(m.height-headerH-footerH, 1) }
+
+func (m *Model) boxWidth() int { return max(m.width, minWidth) - gutter - 1 }
+
+func (m *Model) View() tea.View {
+	if m.width == 0 {
+		return tea.NewView("")
+	}
+	body, cursor := m.renderBody()
+	v := tea.NewView(m.renderHeader() + "\n" + body + "\n" + m.renderFooter())
+	v.AltScreen = true
+	v.WindowTitle = "jupytui - " + filepath.Base(m.path)
+	v.Cursor = cursor
+	return v
+}
+
+func (m *Model) renderHeader() string {
+	name := filepath.Base(m.path)
+	if m.dirty {
+		name += " [+]"
+	}
+	left := m.st.accent.Bold(true).Render(" jupytui ") + m.st.header.Render(name)
+
+	var dot lipgloss.Style
+	switch m.kstate {
+	case "idle":
+		dot = m.st.ok
+	case "busy", "starting":
+		dot = m.st.busy
+	default:
+		dot = m.st.errText
+	}
+	right := m.st.dim.Render(m.nb.KernelName()+" ") + dot.Render("● "+m.kstate) + " "
+	gap := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)
+	return left + strings.Repeat(" ", gap) + right
+}
+
+func (m *Model) renderFooter() string {
+	var left string
+	if m.mode == editMode {
+		left = m.st.editAccent.Bold(true).Render(" EDIT ")
+	} else {
+		left = m.st.accent.Bold(true).Render(" NORMAL ")
+	}
+	text := m.msg
+	if text == "" {
+		if m.mode == editMode {
+			text = "esc normal · ctrl+r run · ctrl+s save"
+		} else {
+			text = "enter edit · ctrl+r run · j/k move · ctrl+s save · q quit"
+		}
+	}
+	pos := fmt.Sprintf(" %d/%d ", m.sel+1, len(m.nb.Cells))
+	mid := m.st.footer.Render(" " + text)
+	gap := max(m.width-lipgloss.Width(left)-lipgloss.Width(mid)-len(pos), 1)
+	return ansi.Truncate(left+mid+strings.Repeat(" ", gap)+m.st.dim.Render(pos), m.width, "")
+}
+
+// renderBody lays out every cell, scrolls so the selection (or the
+// edit cursor) is visible, and returns the visible slice.
+func (m *Model) renderBody() (string, *tea.Cursor) {
+	var (
+		lines     []string
+		selTop    int
+		selBottom int
+		editTop   = -1
+		bodyH     = m.bodyHeight()
+		width     = max(m.width, minWidth)
+	)
+	for i, c := range m.nb.Cells {
+		if i == m.sel {
+			selTop = len(lines)
+		}
+		cl, edit := m.renderCell(i, c)
+		if edit >= 0 {
+			editTop = len(lines) + edit
+		}
+		lines = append(lines, cl...)
+		if i == m.sel {
+			selBottom = len(lines)
+		}
+		lines = append(lines, "")
+	}
+
+	var cur *tea.Cursor
+	var curLine int
+	if m.mode == editMode && editTop >= 0 {
+		if c := m.ta.Cursor(); c != nil {
+			cur = c
+			curLine = editTop + c.Y
+		}
+	}
+
+	// keep the thing we care about on screen
+	if cur != nil {
+		if curLine < m.offset {
+			m.offset = curLine
+		} else if curLine >= m.offset+bodyH {
+			m.offset = curLine - bodyH + 1
+		}
+	} else if !m.manualScroll {
+		if selBottom-selTop <= bodyH && selBottom > m.offset+bodyH {
+			m.offset = selBottom - bodyH
+		}
+		if selTop < m.offset || selBottom-selTop > bodyH && selTop > m.offset {
+			m.offset = selTop
+		}
+	}
+	m.offset = max(0, min(m.offset, len(lines)-bodyH))
+
+	end := min(m.offset+bodyH, len(lines))
+	visible := lines[m.offset:end]
+	for len(visible) < bodyH {
+		visible = append(visible, "")
+	}
+	for i, l := range visible {
+		visible[i] = ansi.Truncate(l, width, "")
+	}
+
+	if cur != nil {
+		c := *cur
+		c.X += gutter + 2
+		c.Y = headerH + curLine - m.offset
+		cur = &c
+	}
+	return strings.Join(visible, "\n"), cur
+}
+
+// renderCell returns the cell's lines and, if it holds the editor, the
+// line index where the editor starts (else -1).
+func (m *Model) renderCell(i int, c *notebook.Cell) ([]string, int) {
+	selected := i == m.sel
+	editing := selected && m.mode == editMode
+	boxW := m.boxWidth()
+	inner := boxW - 4
+
+	border := m.st.faint
+	if editing {
+		border = m.st.editAccent
+	} else if selected {
+		border = m.st.accent
+	}
+
+	if c.Type == notebook.Markdown && !editing {
+		return m.renderMarkdownCell(c, selected, boxW), -1
+	}
+
+	var content string
+	switch {
+	case editing:
+		content = strings.TrimRight(m.ta.View(), "\n")
+	case c.Type == notebook.Code:
+		content = m.highlight(c.Source)
+	default:
+		content = c.Source
+	}
+	var wrapped []string
+	for _, l := range strings.Split(expandTabs(content), "\n") {
+		if editing {
+			wrapped = append(wrapped, l)
+			continue
+		}
+		wrapped = append(wrapped, strings.Split(ansi.Hardwrap(l, inner, true), "\n")...)
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border.GetForeground()).
+		Padding(0, 1).
+		Width(boxW).
+		Render(strings.Join(wrapped, "\n"))
+	boxLines := strings.Split(box, "\n")
+
+	pad := strings.Repeat(" ", gutter)
+	out := make([]string, 0, len(boxLines)+len(c.Outputs))
+	for j, l := range boxLines {
+		g := pad
+		if j == 1 {
+			g = m.prompt(c, selected)
+		}
+		out = append(out, g+l)
+	}
+
+	if c.Type == notebook.Code {
+		indent := strings.Repeat(" ", gutter+2)
+		for _, l := range m.renderOutputs(c, boxW-2) {
+			out = append(out, indent+l)
+		}
+	}
+	edit := -1
+	if editing {
+		edit = 1
+	}
+	return out, edit
+}
+
+func (m *Model) prompt(c *notebook.Cell, selected bool) string {
+	var p string
+	switch {
+	case c.Type != notebook.Code:
+		p = ""
+	case m.runs[c] == running && m.isRunning(c):
+		r := []rune(spinChars)
+		p = "[" + string(r[m.frame%len(r)]) + "]"
+	case m.isRunning(c):
+		p = "[*]"
+	case c.ExecutionCount != nil:
+		p = fmt.Sprintf("[%d]", *c.ExecutionCount)
+	default:
+		p = "[ ]"
+	}
+	st := m.st.prompt
+	if selected {
+		st = m.st.accent
+	}
+	return st.Render(fmt.Sprintf("%*s ", gutter-1, p))
+}
+
+func (m *Model) isRunning(c *notebook.Cell) bool {
+	_, ok := m.runs[c]
+	return ok
+}
+
+func (m *Model) renderMarkdownCell(c *notebook.Cell, selected bool, boxW int) []string {
+	bar := m.st.faint.Render("▏")
+	if selected {
+		bar = m.st.accent.Render("▌")
+	}
+	src := strings.TrimSpace(c.Source)
+	var body string
+	if src == "" {
+		body = m.st.dim.Render("empty markdown cell")
+	} else {
+		body = m.markdown(src, boxW-2)
+	}
+	pad := strings.Repeat(" ", gutter)
+	var out []string
+	for _, l := range strings.Split(body, "\n") {
+		out = append(out, pad+bar+" "+l)
+	}
+	return out
+}
+
+func (m *Model) highlight(src string) string {
+	if src == "" {
+		return ""
+	}
+	if s, ok := m.hlCache[src]; ok {
+		return s
+	}
+	var b strings.Builder
+	if err := quick.Highlight(&b, src, m.lang, "terminal256", m.st.chroma); err != nil {
+		return src
+	}
+	s := strings.TrimRight(b.String(), "\n")
+	m.hlCache[src] = s
+	return s
+}
+
+// markdown renders with glamour and trims the blank margins it adds.
+func (m *Model) markdown(src string, width int) string {
+	key := fmt.Sprintf("%d\x00%s", width, src)
+	if s, ok := m.mdCache[key]; ok {
+		return s
+	}
+	if m.mdr == nil || m.mdrW != width {
+		style := "dark"
+		if !m.dark {
+			style = "light"
+		}
+		r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(width))
+		if err != nil {
+			return src
+		}
+		m.mdr, m.mdrW = r, width
+	}
+	out, err := m.mdr.Render(src)
+	if err != nil {
+		return src
+	}
+	lines := strings.Split(out, "\n")
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[0])) == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	s := strings.Join(lines, "\n")
+	m.mdCache[key] = s
+	return s
+}
