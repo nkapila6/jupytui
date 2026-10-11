@@ -103,6 +103,7 @@ type Model struct {
 	input      *inputState        // a cell waiting on input()
 	widgets    map[string]*widget // live ipywidgets by comm id
 	wfocus     *widgetFocus
+	ai         *aiPane // ga
 
 	search     string // last / pattern
 	hlsearch   bool
@@ -224,6 +225,9 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach
 	m.execSrc = map[*notebook.Cell]string{}
 	m.msgIDs = map[*notebook.Cell]string{}
 	m.attach = attach
+	if attach != nil {
+		m.restoreAI(attach.Session.Chat)
+	}
 	m.sixelCache = map[string]string{}
 	m.searchIn = textinput.New()
 	m.searchIn.Prompt = "/"
@@ -325,6 +329,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		return m, m.handleEvent(msg)
 
+	case aiStartMsg:
+		return m, m.handleAIStart(msg)
+
+	case aiChunkMsg:
+		return m, m.handleAIChunk(msg)
+
 	case commEventMsg:
 		return m, m.handleCommEvent(msg)
 
@@ -343,7 +353,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.frame++
-		if len(m.runs) == 0 {
+		if len(m.runs) == 0 && (m.ai == nil || !m.ai.streaming) {
 			m.ticking = false
 			return m, nil
 		}
@@ -454,6 +464,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.wfocus != nil {
 			return m, m.widgetKey(msg)
+		}
+		if m.ai != nil && m.ai.typing && m.ai.open {
+			return m, m.aiKey(msg)
 		}
 		if m.searching {
 			return m, m.searchKey(msg)

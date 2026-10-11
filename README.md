@@ -87,6 +87,23 @@ jupytui sessions kill 1   # stop one
 
 `enter` on anything else shows its full repr.
 
+## AI
+
+`ga` opens a chat on the right that sees the notebook: every cell, the outputs (trimmed), and the selected cell's plots as images. Ask why something fails, what a plot shows, how to do the next step. It streams; `esc` goes back to the notebook with the chat still open, `ga` returns to it, `gA` closes it, `ctrl+c` stops a reply, `/clear` forgets the conversation. The chat survives `:detach`.
+
+Pick a model with environment variables. Keys are only ever read from the environment:
+
+```bash
+export ANTHROPIC_API_KEY=...                                         # Claude, the default (claude-opus-5-5)
+export JUPYTUI_AI=openrouter/<vendor>/<model> OPENROUTER_API_KEY=... # anything on OpenRouter
+export JUPYTUI_AI=ollama/<model>                                     # local Ollama
+export JUPYTUI_AI=openai/<model> JUPYTUI_AI_BASE_URL=http://...      # llama.cpp, LM Studio, vLLM...
+```
+
+Models that can't see images get `[image WxH]` placeholders and the pane tells you. Nothing is sent until you ask something, and the footer shows the tokens used.
+
+For now it only reads: it suggests code, it doesn't edit or run cells. That's next.
+
 ## Python environments
 
 By default the kernel runs in your project's environment (`uv run` in the notebook's folder). `:env` lists everything else it found:
@@ -141,6 +158,7 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `gO`                     | outline: headings and definitions            |
 | `gx`                     | open the cell's chart in the browser, or its image in the system viewer |
 | `tab`                    | use the cell's widgets (sliders, buttons...) |
+| `ga` `gA`                | AI chat about the notebook / close it       |
 | `ctrl+s`                 | save                                         |
 | `q`                      | quit (asks again if there are unsaved changes) |
 

@@ -71,6 +71,10 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.openOutput()
 		case "gv":
 			return m.openVars()
+		case "ga":
+			return m.openAI()
+		case "gA":
+			m.closeAI()
 		}
 		return nil
 	}

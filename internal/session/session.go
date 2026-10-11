@@ -41,6 +41,8 @@ type Session struct {
 	Env      string    `json:"env"`
 	Started  time.Time `json:"started"`
 	Running  []Running `json:"running"`
+	// the AI pane's conversation, so it survives detach and reattach
+	Chat json.RawMessage `json:"chat,omitempty"`
 }
 
 // Dir is where session files live ($XDG_STATE_HOME/jupytui/sessions).

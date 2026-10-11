@@ -61,6 +61,7 @@ func (m *Model) detach() tea.Cmd {
 		Env:      m.env.Label(),
 		Started:  time.Now(),
 		Running:  running,
+		Chat:     m.aiState(),
 	}
 	m.msg = "detaching…"
 	return func() tea.Msg {

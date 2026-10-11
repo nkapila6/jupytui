@@ -87,7 +87,7 @@ func (m *Model) View() tea.View {
 	if m.width == 0 {
 		return tea.NewView("")
 	}
-	body, cursor := m.renderBody()
+	body, cursor := m.bodyWithAI()
 	if m.help {
 		body, cursor = m.renderHelp(), nil
 	}
@@ -768,6 +768,7 @@ var helpText = [][2]string{
 	{"x", "clear cell output"},
 	{"gx", "open the cell's chart in the browser / image in the viewer"},
 	{"tab", "use the cell's widgets: tab/j/k move, h/l change, enter click, esc"},
+	{"ga  gA", "AI chat about the notebook / close it"},
 	{"ctrl+s :w", "save"},
 	{"q :q :q! :wq", "quit"},
 	{":runall :clear", "run all / clear all outputs"},
