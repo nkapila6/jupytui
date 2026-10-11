@@ -75,6 +75,8 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 			return m.openAI()
 		case "gA":
 			m.closeAI()
+		case "gs":
+			m.openSettings()
 		}
 		return nil
 	}
@@ -411,8 +413,8 @@ func (m *Model) runCommand(line string) tea.Cmd {
 	}
 	if opt, ok := strings.CutPrefix(line, "set "); ok {
 		opt = strings.TrimSpace(opt)
-		if v, ok := strings.CutPrefix(opt, "images="); ok {
-			return m.setGraphics(v)
+		if cmd, ok := m.setFromCommand(opt); ok {
+			return cmd
 		}
 		m.setOption(opt)
 		return nil
@@ -438,6 +440,8 @@ func (m *Model) runCommand(line string) tea.Cmd {
 		m.hlsearch = false
 	case "outline":
 		m.openOutline()
+	case "settings", "se":
+		m.openSettings()
 	case "detach":
 		return m.detach()
 	case "vars":

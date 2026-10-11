@@ -104,6 +104,12 @@ Models that can't see images get `[image WxH]` placeholders and the pane tells y
 
 For now it only reads: it suggests code, it doesn't edit or run cells. That's next.
 
+## Settings
+
+`gs` (or `:settings`) lists every setting: vim keys, line numbers, the language server and diagnostics, saving outputs, reactive mode, how images are drawn, the Python environment, and the AI model, effort and whether plots go to it as images. `j`/`k` to move, `enter` to toggle or edit, `h`/`l` to cycle.
+
+Whatever you change there or with `:set` is remembered in `~/.config/jupytui/config.json` (or under `$XDG_CONFIG_HOME`) and applied next time. API keys never go in it. `JUPYTUI_IMAGES` still beats the saved image mode, and the model setting beats `JUPYTUI_AI` when it isn't empty.
+
 ## Python environments
 
 By default the kernel runs in your project's environment (`uv run` in the notebook's folder). `:env` lists everything else it found:
@@ -159,6 +165,7 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `gx`                     | open the cell's chart in the browser, or its image in the system viewer |
 | `tab`                    | use the cell's widgets (sliders, buttons...) |
 | `ga` `gA`                | AI chat about the notebook / close it       |
+| `gs`                     | settings                                     |
 | `ctrl+s`                 | save                                         |
 | `q`                      | quit (asks again if there are unsaved changes) |
 
@@ -225,7 +232,7 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
   - **WezTerm, iTerm2, foot**: full resolution, via sixel
   - **everywhere else**, including inside nvim's terminal and tmux (neither passes images through): half-block characters, two pixels per cell. Low-res but readable.
 
-  `gx` on the cell opens the full image in your system viewer (also how you see SVG output). jupytui picks the mode from your terminal; force one with `JUPYTUI_IMAGES=kitty|sixel|blocks` or `:set images=...`.
+  `gx` on the cell opens the full image in your system viewer (also how you see SVG output). jupytui picks the mode from your terminal; force one with `JUPYTUI_IMAGES=kitty|sixel|blocks`, `:set images=...` or the settings (`gs`).
 - ipywidgets work: sliders, dropdowns, toggle and radio buttons, checkboxes, buttons, text boxes, progress bars, labels, `HBox`/`VBox` layouts and `Output` widgets, so `interact()` does too. `tab` moves into the cell's widgets, `tab`/`j`/`k` between them, `h`/`l` nudge a slider or pick an option (`H`/`L` ten steps), `enter` or `space` clicks, toggles or starts typing, `esc` leaves. Widgets jupytui can't draw show up as `[Name widget]`.
 - charts that need JavaScript (plotly, altair/vega, bokeh, folium, any HTML with scripts) can't run in a terminal, so they show a one-line note and `gx` opens the real interactive chart in your browser. A static PNG is shown inline when the output has one.
 

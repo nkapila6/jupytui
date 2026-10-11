@@ -108,6 +108,7 @@ func (e *APIError) Error() string { return fmt.Sprintf("%d: %s", e.Status, e.Msg
 // whether the model rejected images.
 type Session struct {
 	P        Provider
+	NoImages bool // the user turned images off: placeholders, no note
 	textOnly bool
 	noted    bool
 }
@@ -119,6 +120,9 @@ type Session struct {
 func (s *Session) Send(ctx context.Context, req Request) (<-chan Chunk, error) {
 	if !s.textOnly && s.P.Vision(ctx) == No {
 		s.textOnly = true
+	}
+	if s.NoImages {
+		return s.P.Stream(ctx, s.strip(req))
 	}
 	if s.textOnly || !hasImages(req.Messages) {
 		ch, err := s.P.Stream(ctx, s.strip(req))

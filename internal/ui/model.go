@@ -104,6 +104,12 @@ type Model struct {
 	widgets    map[string]*widget // live ipywidgets by comm id
 	wfocus     *widgetFocus
 	ai         *aiPane // ga
+	settings   *settingsPanel
+	cfg        map[string]string // what's saved in config.json
+	imagesPref string            // images setting, "" for auto
+	aiModel    string            // provider/model, "" for JUPYTUI_AI or the default
+	aiEffort   string
+	aiImages   bool
 
 	search     string // last / pattern
 	hlsearch   bool
@@ -213,6 +219,8 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach
 		number:  true,
 		// relative by default, like LazyVim
 		relative: true,
+		aiEffort: "medium",
+		aiImages: true,
 	}
 	m.lspCtx, m.lspCancel = context.WithCancel(context.Background())
 	m.gfxMode = detectGraphics()
@@ -238,6 +246,7 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach
 	m.cmd.Prompt = ":"
 	m.cmd.SetVirtualCursor(false)
 	m.applyTheme()
+	m.applyConfig()
 	return m
 }
 
@@ -479,6 +488,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.dfv != nil {
 			return m, m.frameKey(msg)
+		}
+		if m.settings != nil {
+			return m, m.settingsKey(msg)
 		}
 		if m.vars != nil {
 			return m, m.varsKey(msg)

@@ -82,25 +82,58 @@ type aiChunkMsg struct {
 	ok  bool
 }
 
-func newAIPane() *aiPane {
-	p := &aiPane{effort: "medium"}
+func (m *Model) newAIPane() *aiPane {
+	p := &aiPane{effort: m.aiEffort}
 	p.input = textinput.New()
 	p.input.Prompt = "› "
 	p.input.Placeholder = "ask about this notebook"
 	p.input.SetVirtualCursor(false)
-	prov, err := ai.FromEnv()
+	m.connectAI(p)
+	return p
+}
+
+// connectAI picks the provider: the model setting, else JUPYTUI_AI or the default.
+func (m *Model) connectAI(p *aiPane) {
+	var prov ai.Provider
+	var err error
+	if m.aiModel != "" {
+		prov, err = ai.Parse(m.aiModel)
+	} else {
+		prov, err = ai.FromEnv()
+	}
+	p.sess, p.cfgErr = nil, ""
 	if err != nil {
 		p.cfgErr = err.Error()
-	} else {
-		p.sess = &ai.Session{P: prov}
+		return
 	}
-	return p
+	p.sess = &ai.Session{P: prov, NoImages: !m.aiImages}
+}
+
+// resetAIProvider switches model. A conversation can't carry over (its
+// thinking blocks belong to the old model), so it starts over.
+func (m *Model) resetAIProvider() {
+	p := m.ai
+	if p == nil {
+		return
+	}
+	if p.streaming {
+		m.stopAI("stopped")
+	}
+	m.connectAI(p)
+	if len(p.hist) > 0 {
+		p.hist, p.snap = nil, ""
+		name := "the new model"
+		if p.sess != nil {
+			name = p.sess.P.Name()
+		}
+		p.entries = append(p.entries, aiEntry{Kind: "note", Text: "switched to " + name + ", new conversation"})
+	}
 }
 
 // openAI is ga: open the pane and start typing.
 func (m *Model) openAI() tea.Cmd {
 	if m.ai == nil {
-		m.ai = newAIPane()
+		m.ai = m.newAIPane()
 	}
 	if m.mode == editMode {
 		m.stopEdit()
@@ -570,7 +603,7 @@ func (m *Model) restoreAI(raw json.RawMessage) {
 	if json.Unmarshal(raw, &s) != nil {
 		return
 	}
-	p := newAIPane()
+	p := m.newAIPane()
 	if p.sess == nil || p.sess.P.Name() != s.Model {
 		return
 	}

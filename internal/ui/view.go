@@ -100,6 +100,9 @@ func (m *Model) View() tea.View {
 	if m.outline != nil {
 		body, cursor = m.renderOutline(), nil
 	}
+	if m.settings != nil {
+		body, cursor = m.renderSettings()
+	}
 	if m.dfv != nil {
 		body, cursor = m.renderFrame(), nil
 		if m.dfv.editing {
@@ -769,6 +772,7 @@ var helpText = [][2]string{
 	{"gx", "open the cell's chart in the browser / image in the viewer"},
 	{"tab", "use the cell's widgets: tab/j/k move, h/l change, enter click, esc"},
 	{"ga  gA", "AI chat about the notebook / close it"},
+	{"gs  :settings", "every setting, remembered between runs"},
 	{"ctrl+s :w", "save"},
 	{"q :q :q! :wq", "quit"},
 	{":runall :clear", "run all / clear all outputs"},
@@ -792,7 +796,7 @@ var helpText = [][2]string{
 	{"K  gd", "hover docs / go to definition (lsp)"},
 	{"]d [d", "next / previous diagnostic"},
 	{":set [no]lsp [no]diag", "language server / diagnostics"},
-	{":set images=kitty|sixel|blocks", "how plots are drawn"},
+	{":set images=auto|kitty|sixel|blocks", "how plots are drawn"},
 }
 
 func (m *Model) renderHelp() string {
