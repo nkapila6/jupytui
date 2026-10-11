@@ -29,6 +29,15 @@ func (m *Model) renderOutputs(c *notebook.Cell, width int) ([]string, []outImg) 
 		if truncated {
 			break
 		}
+		if id, ok := viewID(o); ok && m.widgets[id] != nil {
+			wl, wimgs := m.renderWidget(id, width, 0)
+			for _, p := range wimgs {
+				p.line += len(lines)
+				imgs = append(imgs, p)
+			}
+			lines = append(lines, wl...)
+			continue
+		}
 		// images are already sized to width, skip the wrapping below
 		if img, place, ok := m.renderImage(o, width); ok {
 			if place != nil {
@@ -80,6 +89,9 @@ func (m *Model) renderOutputs(c *notebook.Cell, width int) ([]string, []outImg) 
 
 // renderMime picks the richest mime type we can actually draw.
 func (m *Model) renderMime(o *notebook.Output, width int) string {
+	if kind, ok := browserKind(o); ok {
+		return m.st.dim.Render(kind + ", gx opens it in the browser")
+	}
 	if s, ok := o.DataText("text/markdown"); ok {
 		return m.markdown(s, width)
 	}
@@ -98,6 +110,10 @@ func (m *Model) renderMime(o *notebook.Output, width int) string {
 		}
 	}
 	plain, hasPlain := o.DataText("text/plain")
+	if _, ok := o.Data[widgetMime]; ok && hasPlain {
+		// a widget from before this kernel: all we have is its repr
+		return plain + "\n" + m.st.dim.Render("(widget not live, run the cell again)")
+	}
 	// IPython's HTML() and friends only have a "<... object>" repr as
 	// plain text, the HTML is the actual content
 	if h, ok := o.DataText("text/html"); ok && (!hasPlain || objectRepr.MatchString(plain)) {

@@ -68,7 +68,7 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 		case "gg":
 			jump(0)
 		case "gx":
-			m.openImage()
+			m.openOutput()
 		case "gv":
 			return m.openVars()
 		}
@@ -156,6 +156,8 @@ func (m *Model) normalKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	case "e":
 		return m.openEditor(m.cell())
+	case "tab":
+		m.focusWidgets()
 
 	case "shift+enter", "ctrl+r":
 		return m.runAndAdvance()

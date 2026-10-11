@@ -299,6 +299,16 @@ func NewOutput(msgType string, content json.RawMessage) (*Output, error) {
 	return parseOutput(raw)
 }
 
+// ParseOutput reads one output in nbformat's own shape, as widgets keep
+// them in their state.
+func ParseOutput(b json.RawMessage) (*Output, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, err
+	}
+	return parseOutput(raw)
+}
+
 // splitMimeBundle mirrors nbformat's _split_mimebundle.
 func splitMimeBundle(data map[string]json.RawMessage) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage, len(data))

@@ -100,7 +100,9 @@ type Model struct {
 	detached   bool
 	remote     *remoteInfo
 	vars       *varsPanel
-	input      *inputState // a cell waiting on input()
+	input      *inputState        // a cell waiting on input()
+	widgets    map[string]*widget // live ipywidgets by comm id
+	wfocus     *widgetFocus
 
 	search     string // last / pattern
 	hlsearch   bool
@@ -227,6 +229,7 @@ func New(path string, nb *notebook.Notebook, opts kernel.Options, attach *Attach
 	m.searchIn.Prompt = "/"
 	m.searchIn.SetVirtualCursor(false)
 	m.folded = map[*notebook.Cell]bool{}
+	m.widgets = map[string]*widget{}
 	m.cmd = textinput.New()
 	m.cmd.Prompt = ":"
 	m.cmd.SetVirtualCursor(false)
@@ -295,7 +298,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.k = msg.Kernel
 		m.kstate = "idle"
-		cmds := []tea.Cmd{m.waitStatus(), m.depsCmd()}
+		// widgets belonged to the old kernel's objects
+		m.widgets = map[string]*widget{}
+		m.wfocus = nil
+		cmds := []tea.Cmd{m.waitStatus(), m.depsCmd(), waitComms(msg.Kernel)}
 		if m.attach != nil {
 			cmds = append(cmds, m.adopt(msg.Kernel))
 		}
@@ -318,6 +324,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case eventMsg:
 		return m, m.handleEvent(msg)
+
+	case commEventMsg:
+		return m, m.handleCommEvent(msg)
+
+	case commMsg:
+		if msg.k != m.k {
+			return m, nil
+		}
+		m.handleComm(msg.c)
+		return m, tea.Batch(waitComms(msg.k), m.syncKitty())
 
 	case interruptMsg:
 		if msg.err != nil {
@@ -435,6 +451,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.input != nil {
 			return m, m.inputKey(msg)
+		}
+		if m.wfocus != nil {
+			return m, m.widgetKey(msg)
 		}
 		if m.searching {
 			return m, m.searchKey(msg)
@@ -618,11 +637,13 @@ func (m *Model) handleEvent(e eventMsg) tea.Cmd {
 		n := e.ev.ExecCount
 		c.ExecutionCount = &n
 	case kernel.EvOutput:
-		c.AddOutput(e.ev.Output)
-		m.dirty = true
+		m.addOutput(c, m.msgIDs[c], e.ev.Output)
 		return tea.Batch(waitEvent(e.k, c, e.ch), m.syncKitty())
 	case kernel.EvClear:
-		c.Outputs = nil
+		m.clearOutput(c, m.msgIDs[c], false)
+	case kernel.EvComm:
+		m.handleComm(e.ev.Comm)
+		return tea.Batch(waitEvent(e.k, c, e.ch), m.syncKitty())
 	case kernel.EvInput:
 		return tea.Batch(waitEvent(e.k, c, e.ch), m.startInput(e.k, c, e.ev.Input))
 	case kernel.EvDone:

@@ -23,14 +23,16 @@ import (
 )
 
 // DefaultCmd runs ipykernel in the project env via uv. --with layers
-// ipykernel on top so the project doesn't need it as a dependency.
-var DefaultCmd = []string{"uv", "run", "--with", "ipykernel", "python", "-c", bootstrap, "-f", "{connection_file}"}
+// ipykernel on top so the project doesn't need it as a dependency, plus
+// ipywidgets for interactive outputs and nbformat, which plotly needs to
+// display anything.
+var DefaultCmd = []string{"uv", "run", "--with", "ipykernel", "--with", "ipywidgets", "--with", "nbformat", "python", "-c", bootstrap, "-f", "{connection_file}"}
 
 // CmdForPython runs the kernel on a specific interpreter (a venv, conda
 // env or bare python), with ipykernel overlaid by uv so the env itself
 // doesn't need it installed.
 func CmdForPython(python string) []string {
-	return []string{"uv", "run", "--no-project", "--python", python, "--with", "ipykernel", "python", "-c", bootstrap, "-f", "{connection_file}"}
+	return []string{"uv", "run", "--no-project", "--python", python, "--with", "ipykernel", "--with", "ipywidgets", "--with", "nbformat", "python", "-c", bootstrap, "-f", "{connection_file}"}
 }
 
 // bootstrap starts ipykernel with a watchdog on its owner. ipykernel's
@@ -108,6 +110,7 @@ type Kernel struct {
 	inputs   map[string]chan *Message // input_requests by parent msg_id
 
 	status   chan string
+	comms    chan *Comm
 	dead     chan struct{}
 	waitErr  error
 	stopOnce sync.Once
@@ -205,6 +208,7 @@ func newKernel(conn ConnInfo, connFile string) *Kernel {
 		watchers: map[string]chan *Message{},
 		inputs:   map[string]chan *Message{},
 		status:   make(chan string, 32),
+		comms:    make(chan *Comm, 1024),
 		dead:     make(chan struct{}),
 	}
 }
@@ -396,6 +400,15 @@ func (k *Kernel) iopubLoop() {
 		k.mu.Lock()
 		ch := k.watchers[m.ParentHeader.MsgID]
 		k.mu.Unlock()
+		if ch == nil && isComm(m.Header.MsgType) {
+			// from a thread or a request we aren't following
+			select {
+			case k.comms <- newComm(m):
+			case <-k.dead:
+				return
+			}
+			continue
+		}
 		if ch != nil {
 			select {
 			case ch <- m:
@@ -465,13 +478,16 @@ const (
 	EvClear                    // clear_output
 	EvDone                     // ExecCount, Status (ok/error/aborted) or Err set
 	EvInput                    // Input set: the cell is waiting for a line
+	EvComm                     // Comm set: widget traffic, in order with the outputs
 )
 
 type Event struct {
 	Kind      EventKind
 	Input     *InputRequest
 	Output    *notebook.Output
+	Comm      *Comm
 	ExecCount int
+	Wait      bool // clear_output(wait=True): clear when the next output arrives
 	Status    string
 	Err       error
 }
@@ -555,6 +571,12 @@ func (k *Kernel) execute(code string, history bool) (string, <-chan Event, error
 		return "", nil, err
 	}
 
+	return id, k.follow(id, iopub, reply, inputs), nil
+}
+
+// follow turns the iopub traffic of one request into events. reply is
+// nil for requests that never get one (comm_msg), those end on idle.
+func (k *Kernel) follow(id string, iopub, reply, inputs chan *Message) <-chan Event {
 	events := make(chan Event, 64)
 	go func() {
 		defer close(events)
@@ -566,7 +588,7 @@ func (k *Kernel) execute(code string, history bool) (string, <-chan Event, error
 		}()
 		var (
 			done     Event
-			gotReply bool
+			gotReply = reply == nil
 			idle     bool
 		)
 		done.Kind = EvDone
@@ -605,7 +627,13 @@ func (k *Kernel) execute(code string, history bool) (string, <-chan Event, error
 						events <- Event{Kind: EvOutput, Output: out}
 					}
 				case "clear_output":
-					events <- Event{Kind: EvClear}
+					var c struct {
+						Wait bool `json:"wait"`
+					}
+					json.Unmarshal(msg.Content, &c)
+					events <- Event{Kind: EvClear, Wait: c.Wait}
+				case "comm_open", "comm_msg", "comm_close":
+					events <- Event{Kind: EvComm, Comm: newComm(msg)}
 				}
 			case <-k.dead:
 				done.Status = "dead"
@@ -616,7 +644,7 @@ func (k *Kernel) execute(code string, history bool) (string, <-chan Event, error
 		}
 		events <- done
 	}()
-	return id, events, nil
+	return events
 }
 
 // Interrupt asks the kernel to interrupt over the control channel, and

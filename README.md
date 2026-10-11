@@ -139,7 +139,8 @@ There are two levels, like jupyterlab-vim: the **notebook** (moving between cell
 | `/` `n` `N`              | search every cell (smartcase), next, previous |
 | `za` `zM` `zR`           | fold a cell's output / fold all / unfold all |
 | `gO`                     | outline: headings and definitions            |
-| `gx`                     | open the cell's image in the system viewer   |
+| `gx`                     | open the cell's chart in the browser, or its image in the system viewer |
+| `tab`                    | use the cell's widgets (sliders, buttons...) |
 | `ctrl+s`                 | save                                         |
 | `q`                      | quit (asks again if there are unsaved changes) |
 
@@ -207,6 +208,10 @@ It runs basedpyright's `basic` checks with "unused expression" off, since a bare
   - **everywhere else**, including inside nvim's terminal and tmux (neither passes images through): half-block characters, two pixels per cell. Low-res but readable.
 
   `gx` on the cell opens the full image in your system viewer (also how you see SVG output). jupytui picks the mode from your terminal; force one with `JUPYTUI_IMAGES=kitty|sixel|blocks` or `:set images=...`.
+- ipywidgets work: sliders, dropdowns, toggle and radio buttons, checkboxes, buttons, text boxes, progress bars, labels, `HBox`/`VBox` layouts and `Output` widgets, so `interact()` does too. `tab` moves into the cell's widgets, `tab`/`j`/`k` between them, `h`/`l` nudge a slider or pick an option (`H`/`L` ten steps), `enter` or `space` clicks, toggles or starts typing, `esc` leaves. Widgets jupytui can't draw show up as `[Name widget]`.
+- charts that need JavaScript (plotly, altair/vega, bokeh, folium, any HTML with scripts) can't run in a terminal, so they show a one-line note and `gx` opens the real interactive chart in your browser. A static PNG is shown inline when the output has one.
+
+ipywidgets and nbformat (plotly needs it to display anything) are layered into the kernel by uv like ipykernel, so your project doesn't need them.
 
 ## Neovim (LazyVim)
 

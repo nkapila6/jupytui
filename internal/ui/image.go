@@ -9,10 +9,7 @@ import (
 	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/nkapila6/jupytui/internal/notebook"
@@ -205,30 +202,16 @@ func (m *Model) openImage() {
 			continue
 		}
 		ext := map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/svg+xml": ".svg"}[mt]
-		if m.imgDir == "" {
-			dir, err := os.MkdirTemp("", "jupytui-img-")
-			if err != nil {
-				m.msg = "gx: " + err.Error()
-				return
-			}
-			m.imgDir = dir
+		path, err := m.tempFile("output-%d"+ext, data)
+		if err == nil {
+			err = openPath(path)
 		}
-		m.imgN++
-		path := filepath.Join(m.imgDir, fmt.Sprintf("output-%d%s", m.imgN, ext))
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			m.msg = "gx: " + err.Error()
-			return
-		}
-		opener := "xdg-open"
-		if runtime.GOOS == "darwin" {
-			opener = "open"
-		}
-		if err := exec.Command(opener, path).Start(); err != nil {
+		if err != nil {
 			m.msg = "gx: " + err.Error()
 			return
 		}
 		m.msg = "opened " + filepath.Base(path)
 		return
 	}
-	m.msg = "no image in this cell"
+	m.msg = "no image or chart in this cell"
 }
